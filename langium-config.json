@@ -1,0 +1,15 @@
+{
+    "projectName": "Alloy",
+    "languages": [{
+        "id": "alloy",
+        "grammar": "src/language/alloy.langium",
+        "fileExtensions": [".als"],
+        "textMate": {
+            "out": "syntaxes/alloy.tmLanguage.json"
+        },
+        "monarch": {
+            "out": "src/syntaxes/alloy.monarch.ts"
+        }
+    }],
+    "out": "src/language/generated"
+}
