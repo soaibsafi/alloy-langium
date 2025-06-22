@@ -1,5 +1,7 @@
 grammar Alloy
 
+type NamedElement = SigDecl | PredDecl | FunDecl | FactDecl | AssertDecl | FieldDecl | LetDecl | Decl | EnumDecl
+
 entry AlloyModule:
     ModuleDecl? import+=Import* paragraph+=Paragraph*;
 
@@ -11,16 +13,16 @@ Import:
 
 // paragraph ::= sigDecl | factDecl | predDecl | funDecl | assertDecl | cmdDecl
 Paragraph:
-    SigDecl | FactDecl | PredDecl | FunDecl | AssertDecl | CmdDecl;
+    SigDecl | FactDecl | PredDecl | FunDecl | AssertDecl | CmdDecl | EnumDecl;
 
 //sigDecl ::= [var] [abstract] [mult] sig name,+ [sigExt] { fieldDecl,* } [block]
 SigDecl:
-    'var'? 'abstract'? mult=MULT? 'sig' names+=ID (',' names+=ID)* sigExt=SigExt? 
+    'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalNames+=ID)* sigExt=SigExt? 
     '{' (fields+=FieldDecl (',' fields+=FieldDecl)*)? '}' block=Block?;
     
 //sigExt ::= extends qualName | in qualName [+ qualName]*
 SigExt:
-    'extends' qualName=QualName | 'in' qualName=QualName ('+' qualNames+=QualName)*;
+    'extends' qualName=[NamedElement:ID] | 'in' qualName=[NamedElement:ID] ('+' qualNames+=[NamedElement:ID])*;
 
 // fieldDecl ::= [var] decl
 FieldDecl:
@@ -28,7 +30,7 @@ FieldDecl:
 
 //decl ::= [disj] name,+ : [disj] expr
 Decl:
-    'disj'? names+=ID (',' names+=ID)* ':' 'disj'? expr=Expr;
+    'disj'? name=ID (',' additionalNames+=ID)* ':' 'disj'? expr=Expr;
 
 //factDecl ::= fact [name] block
 FactDecl:
@@ -36,11 +38,11 @@ FactDecl:
 
 // predDecl ::= pred [qualName .] name [paraDecls] block
 PredDecl:
-    'pred' (qualName=QualName '.')? name=ID paraDecls=ParaDecls? block=Block;
+    'pred' (qualName=[NamedElement:ID] '.')? name=ID paraDecls=ParaDecls? block=Block;
 
 // funDecl ::= fun [qualName .] name [paraDecls] : expr { expr }
 FunDecl:
-    'fun' (qualName=QualName '.')? name=ID paraDecls=ParaDecls? ':' retType=Expr '{' body=Expr '}';
+    'fun' (qualName=[NamedElement:ID] '.')? name=ID paraDecls=ParaDecls? ':' retType=Expr '{' body=Expr '}';
 
 // paraDecls ::= ( decl,* ) | [ decl,* ]
 ParaDecls:
@@ -50,9 +52,13 @@ ParaDecls:
 AssertDecl:
     'assert' name=ID? block=Block;
 
+// enumDecl ::= enum name { name,+ }
+EnumDecl:
+    'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
+
 // cmdDecl ::= [name :] ( run | check ) ( qualName | block ) [scope]
 CmdDecl:
-    (name=ID ':')? (kind='run' | kind='check') (qualName=QualName | block=Block) scope=Scope?;
+    (name=ID ':')? (kind='run' | kind='check') (qualName=[NamedElement:ID] | block=Block) scope=Scope?;
 
 // scope ::= for number [but typescope,+] | for typescope,+ [expect number]
 Scope:
@@ -61,7 +67,7 @@ Scope:
 
 // typescope ::= [exactly] number qualName
 TypeScope:
-    'exactly'? number=INT qualName=QualName;
+    'exactly'? number=INT qualName=[NamedElement:ID];
 
 
 // Expression with precedence (from lowest to highest precedence)
@@ -133,18 +139,18 @@ UnaryExpr infers Expr:
 PrimaryExpr infers Expr:
     Const 
     | QualName 
-    | ({infer AtExpr} '@' name=ID)
+    | ({infer AtExpr} '@' ref=[NamedElement:ID])
     | ({infer ThisExpr} 'this')
     | ({infer ParenExpr} '(' expr=Expr ')')
     | Block
     | ({infer SetExpr} '{' decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar '}')
-    | ({infer CallExpr} qualName=QualName '[' args+=Expr (',' args+=Expr)* ']')  // function/predicate call
+    | ({infer CallExpr} qualName=[NamedElement:ID] '[' args+=Expr (',' args+=Expr)* ']')  // function/predicate call
     ;
 
 
 // qualName ::= [this/] ( name / )* name
 QualName:
-    ('this/')? (names+=ID'/')* name=ID;
+    ('this/')? (names+=ID'/')* ID=[NamedElement:ID];
 
 // const ::= [-] number | none | univ | iden
 Const:
