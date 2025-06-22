@@ -4,25 +4,23 @@ entry AlloyModule:
     ModuleDecl? import+=Import* paragraph+=Paragraph*;
 
 ModuleDecl:
-    'module' qualName=QualName (name=ID (',' name+=ID)*)?; 
+    'module' qualName=QualName ('[' alias+=ID (',' alias+=ID)* ']')?; 
 
 Import:
-    'open' qualName=QualName ('['name+=QualName (',' name+=QualName)*']')? ('as' name=ID)?;
+    'open' qualName=QualName ('[' aliases+=QualName (',' aliases+=QualName)*']')? ('as' alias=ID)?;
 
 // paragraph ::= sigDecl | factDecl | predDecl | funDecl | assertDecl | cmdDecl
 Paragraph:
-    sig=SigDecl | fact=FactDecl | pred=PredDecl | fun=FunDecl | assert=AssertDecl | cmd=CmdDecl
-    ;
+    SigDecl | FactDecl | PredDecl | FunDecl | AssertDecl | CmdDecl;
 
 //sigDecl ::= [var] [abstract] [mult] sig name,+ [sigExt] { fieldDecl,* } [block]
 SigDecl:
-    'var'? 'abstract'? MULT? 'sig' (name=ID (',' name=ID)*)? sigExt=SigExt? 
-    '{' (name=FieldDecl (',' name=FieldDecl)*)* '}' (block=Block)?
-    ;
+    'var'? 'abstract'? mult=MULT? 'sig' names+=ID (',' names+=ID)* sigExt=SigExt? 
+    '{' (fields+=FieldDecl (',' fields+=FieldDecl)*)? '}' block=Block?;
     
 //sigExt ::= extends qualName | in qualName [+ qualName]*
 SigExt:
-    'extends' qualName=QualName | 'in' qualName=QualName ('+' qualName=QualName)* ;
+    'extends' qualName=QualName | 'in' qualName=QualName ('+' qualNames+=QualName)*;
 
 // fieldDecl ::= [var] decl
 FieldDecl:
@@ -30,8 +28,7 @@ FieldDecl:
 
 //decl ::= [disj] name,+ : [disj] expr
 Decl:
-    'disj'? (name=ID (',' name=ID)*)+ ':' 'disj'? Expr;
-
+    'disj'? names+=ID (',' names+=ID)* ':' 'disj'? expr=Expr;
 
 //factDecl ::= fact [name] block
 FactDecl:
@@ -43,11 +40,11 @@ PredDecl:
 
 // funDecl ::= fun [qualName .] name [paraDecls] : expr { expr }
 FunDecl:
-    'fun' (qualName=QualName '.')? name=ID paraDecls=ParaDecls? ':' Expr '{' expr=Expr '}' ;
+    'fun' (qualName=QualName '.')? name=ID paraDecls=ParaDecls? ':' retType=Expr '{' body=Expr '}';
 
 // paraDecls ::= ( decl,* ) | [ decl,* ]
 ParaDecls:
-    (decl=Decl (',' decl+=Decl)*)* | '[' (decl=Decl (',' decl=Decl)*)* ']';
+    '(' (decls+=Decl (',' decls+=Decl)*)? ')' | '[' (decls+=Decl (',' decls+=Decl)*)? ']';
 
 // assertDecl ::= assert [name] block
 AssertDecl:
@@ -55,49 +52,99 @@ AssertDecl:
 
 // cmdDecl ::= [name :] ( run | check ) ( qualName | block ) [scope]
 CmdDecl:
-    (name=ID ':')? ('run' | 'check') (qualName=QualName | block=Block ) scope=Scope?; //FIXME: block=Block;
+    (name=ID ':')? (kind='run' | kind='check') (qualName=QualName | block=Block) scope=Scope?;
 
-// scope ::= for number [but typescope,+] | for typescope,+
+// scope ::= for number [but typescope,+] | for typescope,+ [expect number]
 Scope:
-    'for' number=INT ('but' typescope=TypeScope (',' typescope=TypeScope)*) | 'for' typescope=TypeScope (',' typescope=TypeScope)*;
+    'for' number=INT ('but' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*)? ('expect' expectNum=INT)?
+    | 'for' typeScopes+=TypeScope (',' typeScopes+=TypeScope)* ('expect' expectNum=INT)?;
 
 // typescope ::= [exactly] number qualName
 TypeScope:
     'exactly'? number=INT qualName=QualName;
 
 
-Expr infers Expr:
-    PrimaryExpr (BINARY_OP pr=PrimaryExpr)*
-    | PrimaryExpr (ao=ArrowOp pr=PrimaryExpr)*
-    | PrimaryExpr (COMPARE_OP pr=PrimaryExpr)*
-    | PrimaryExpr ('=>' | 'implies') PrimaryExpr 'else' PrimaryExpr
-    | 'let' (letDlcr=LetDecl (',' letDlcr=LetDecl)*)+ BlockOrBar
-    | QUANT (decl=Decl (',' decl=Decl)*)+ BlockOrBar
-    | '{' (decl=Decl (',' decl=Decl)*)+ '}'
-    | PrimaryExpr '\''
-    | '(' Expr ')' | Block
+// Expression with precedence (from lowest to highest precedence)
+Expr:
+    SequenceExpr;
+
+SequenceExpr infers Expr:
+    QuantExpr ({infer SequenceExpr.left=current} ';' right=QuantExpr)*;
+
+QuantExpr infers Expr:
+    ({infer QuantExpr} 'let' decls+=LetDecl (',' decls+=LetDecl)* blockOrBar=BlockOrBar)
+    | ({infer QuantExpr} QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
+    | DisjunctionExpr;
+
+DisjunctionExpr infers Expr:
+    BiImplicationExpr ({infer DisjunctionExpr.left=current} ('||' | 'or') right=BiImplicationExpr)*;
+
+BiImplicationExpr infers Expr:
+    ImplicationExpr ({infer BiImplicationExpr.left=current} ('<=>' | 'iff') right=ImplicationExpr)*;
+
+ImplicationExpr infers Expr:
+    BinaryTemporalExpr ({infer ImplicationExpr.left=current} ('=>' | 'implies') right=ImplicationExpr ('else' elseExpr=ImplicationExpr)?)?;
+
+BinaryTemporalExpr infers Expr:
+    ConjunctionExpr ({infer BinaryTemporalExpr.left=current} ('until' | 'releases' | 'since' | 'triggered') right=ConjunctionExpr)*;
+
+ConjunctionExpr infers Expr:
+    UnaryLogicalExpr ({infer ConjunctionExpr.left=current} ('&&' | 'and') right=UnaryLogicalExpr)*;
+
+UnaryLogicalExpr infers Expr:
+    ({infer UnaryLogicalExpr} ('!' | 'not' | 'always' | 'eventually' | 'after' | 'before' | 'historically' | 'once') expr=UnaryLogicalExpr)
+    | ComparisonExpr;
+
+ComparisonExpr infers Expr:
+    UnionDiffExpr ({infer ComparisonExpr.left=current} (negated=('!' | 'not'))? op=CompareOp right=UnionDiffExpr)?;
+
+UnionDiffExpr infers Expr:
+    CardinalityExpr ({infer UnionDiffExpr.left=current} ('+' | '-') right=CardinalityExpr)*;
+
+CardinalityExpr infers Expr:
+    ({infer CardinalityExpr} '#' expr=CardinalityExpr)
+    | OverrideExpr;
+
+OverrideExpr infers Expr:
+    IntersectionExpr ({infer OverrideExpr.left=current} '++' right=IntersectionExpr)*;
+
+IntersectionExpr infers Expr:
+    ArrowExpr ({infer IntersectionExpr.left=current} '&' right=ArrowExpr)*;
+
+ArrowExpr infers Expr:
+    RestrictionExpr ({infer ArrowExpr.left=current} arrows+=ArrowOp right=RestrictionExpr)*;
+
+RestrictionExpr infers Expr:
+    BoxJoinExpr ({infer RestrictionExpr.left=current} ('<:' | ':>') right=BoxJoinExpr)*;
+
+BoxJoinExpr infers Expr:
+    DotJoinExpr ({infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']')*;
+
+DotJoinExpr infers Expr:
+    PrimeExpr ({infer DotJoinExpr.left=current} ('.' | '.*' | '.^' | '.~') right=PrimeExpr)*;
+
+PrimeExpr infers Expr:
+    UnaryExpr ({infer PrimeExpr.left=current} PRIME)*;
+
+UnaryExpr infers Expr:
+    ({infer UnaryExpr} ('~' | '^' | '*' | 'no' | 'some' | 'lone' | 'one' | 'set') expr=UnaryExpr)
+    | PrimaryExpr;
+
+PrimaryExpr infers Expr:
+    Const 
+    | QualName 
+    | ({infer AtExpr} '@' name=ID)
+    | ({infer ThisExpr} 'this')
+    | ({infer ParenExpr} '(' expr=Expr ')')
+    | Block
+    | ({infer SetExpr} '{' decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar '}')
+    | ({infer CallExpr} qualName=QualName '[' args+=Expr (',' args+=Expr)* ']')  // function/predicate call
     ;
 
-PrimaryExpr:
-    Const | QualName | '@'ID | 'this'
-    | UnaryOp PrimaryExpr
-    | '(' Expr ')'
-    ;
 
-
-////////////////////////////
-// Left recursion removed Example
-// Expr infers Expr:
-//     PrimaryExpr (ArrowOp right=PrimaryExpr)*;
-
-// PrimaryExpr:
-//     name=ID;
-
-////////////////////////////
 // qualName ::= [this/] ( name / )* name
 QualName:
-    ('this/')? (name+=ID'/')* name=ID;
-
+    ('this/')? (names+=ID'/')* name=ID;
 
 // const ::= [-] number | none | univ | iden
 Const:
@@ -105,17 +152,7 @@ Const:
 
 // ArrowOp ::= [mult | set] -> [mult | set]
 ArrowOp:
-    (mult=MULT | 'set')? '->' (mult=MULT | 'set')?;
-
-//UnaryOp ::= ! | not | no | mult | set | # | ~ | * | ^ | always | eventually | after | before | historically | once
-UnaryOp returns string:
-    '!' | 'not' | 'no' | MULT | 'set' | '#' | '~' | '*' | '^' | 'always' | 'eventually' | 'after' | 'before' | 'historically' | 'once';
-
-// binOp ::= || | or | && | and | <=> | iff | => | implies | & | + | - | ++ | <: | :> | . | until | releases | since | triggered | ;
-BINARY_OP returns string: '||' | 'or' | '&&' | 'and' | '<=>' | 'iff' | '=>' | 'implies' | '&' | '+' | '-' | '++' | '<:' | ':>' | '.' | 'until' | 'releases' | 'since' | 'triggered' | ';';
-
-// compareOp ::= in | = | < | > | =< | >=
-terminal COMPARE_OP: 'in' | '=' | '<' | '>' | '=<' | '=>';
+    (leftMult=MULT | leftSet='set')? '->' (rightMult=MULT | rightSet='set')?;
 
 // letDecl ::= name = expr
 LetDecl:
@@ -123,24 +160,22 @@ LetDecl:
 
 //block ::= { expr* }
 Block:
-    '{' (expr=Expr)* '}';
+    '{' (exprs+=Expr)* '}';
 
 // blockOrBar ::= block | bar expr
 BlockOrBar:
-    block=Block | BAR expr=Expr;
+    block=Block | '|' expr=Expr;
 
-// bar ::= |
-terminal BAR: '|';
+// Comparison operators including negated forms  
+CompareOp returns string:
+    'in' | '=' | '<' | '>' | '=<' | '>=';
 
 // quant ::= all | no | sum | mult
 QUANT returns string: 'all' | 'no' | 'sum' | MULT;
 
-
-
-
 MULT returns string: 'lone' | 'some' | 'one';
 
-
+terminal PRIME: "'";
 hidden terminal WS: /\s+/;
 terminal ID: /[_a-zA-Z][\w_\"]*/;
 terminal INT: /\d+/;
