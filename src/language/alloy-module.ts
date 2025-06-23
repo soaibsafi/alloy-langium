@@ -2,7 +2,7 @@ import { type Module, inject } from 'langium';
 import { createDefaultModule, createDefaultSharedModule, type DefaultSharedModuleContext, type LangiumServices, type LangiumSharedServices, type PartialLangiumServices } from 'langium/lsp';
 import { AlloyGeneratedModule, AlloyGeneratedSharedModule } from './generated/module.js';
 import { AlloyValidator, registerValidationChecks } from './alloy-validator.js';
-import { AlloyScopeProvider } from './alloy-scope-provider.js';
+import { AlloyCompletionProvider } from './alloy-completion-provider.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -28,8 +28,8 @@ export const AlloyModule: Module<AlloyServices, PartialLangiumServices & AlloyAd
     validation: {
         AlloyValidator: () => new AlloyValidator()
     },
-    references: {
-        ScopeProvider: (services) => new AlloyScopeProvider(services)
+    lsp: {
+        CompletionProvider: (services) => new AlloyCompletionProvider(services)
     }
 };
 
