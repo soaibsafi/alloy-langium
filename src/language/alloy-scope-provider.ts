@@ -1,23 +1,18 @@
 import { AstNodeDescription, DefaultScopeProvider, EMPTY_SCOPE, ReferenceInfo, Scope, AstUtils, AstNode } from 'langium';
-import { AlloyModule, SigDecl, PredDecl, FunDecl, QuantExpr, isAlloyModule, isQuantExpr, isDecl } from './generated/ast.js';
+import { AlloyModule, SigDecl, AdditionalSig, PredDecl, FunDecl, QuantExpr, isAlloyModule, isQuantExpr, isDecl } from './generated/ast.js';
 
 export class AlloyScopeProvider extends DefaultScopeProvider {
 
     override getScope(context: ReferenceInfo): Scope {
         const referenceType = this.reflection.getReferenceType(context);
         console.log('Reference type:', referenceType, 'for property:', context.property);
-        
+
         // Handle different reference types with union types
         if (referenceType === 'NamedElement') {
             return this.createNamedElementScope(context);
-        } else if (referenceType === 'SigName') {
-            return this.createSigNameScope(context);
-        } else if (referenceType === 'ScopableElement') {
-            return this.createScopableElementScope(context);
-        } else if (referenceType === 'CallableElement') {
-            return this.createCallableElementScope(context);
         }
-        
+
+
         return super.getScope(context);
     }
 
@@ -26,10 +21,10 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
         if (!model) return EMPTY_SCOPE;
 
         const elements: AstNodeDescription[] = [];
-        
+
         // Add local quantified variables first (they have priority)
         elements.push(...this.collectLocalVariables(context));
-        
+
         // Add all signature names
         elements.push(...this.collectSigNames(model));
         // Add all field names
@@ -38,23 +33,30 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
         elements.push(...this.collectPredicates(model));
         // Add all functions
         elements.push(...this.collectFunctions(model));
-        
+
         return this.createScope(elements);
     }
 
     private collectLocalVariables(context: ReferenceInfo): AstNodeDescription[] {
         const elements: AstNodeDescription[] = [];
         let current: AstNode | undefined = context.container;
-        
+
         // Walk up the AST to find quantifier expressions that introduce variables
         while (current) {
             if (isQuantExpr(current)) {
                 const quantExpr = current as QuantExpr;
                 if (quantExpr.decls) {
                     for (const decl of quantExpr.decls) {
-                        if (isDecl(decl) && decl.names) {
-                            for (const varName of decl.names) {
-                                elements.push(this.descriptions.createDescription(varName, varName.name));
+                        if (isDecl(decl)) {
+                            // Add primary variable name
+                            if (decl.name) {
+                                elements.push(this.descriptions.createDescription(decl, decl.name));
+                            }
+                            // Add additional variable names
+                            if (decl.additionalNames) {
+                                for (const additionalName of decl.additionalNames) {
+                                    elements.push(this.descriptions.createDescription(decl, additionalName));
+                                }
                             }
                         }
                     }
@@ -62,84 +64,66 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
             }
             current = current.$container;
         }
-        
+
         return elements;
     }
 
-    private createSigNameScope(context: ReferenceInfo): Scope {
-        const model = AstUtils.getContainerOfType(context.container, isAlloyModule);
-        if (!model) return EMPTY_SCOPE;
-        
-        return this.createScope(this.collectSigNames(model));
-    }
-
-    private createScopableElementScope(context: ReferenceInfo): Scope {
-        const model = AstUtils.getContainerOfType(context.container, isAlloyModule);
-        if (!model) return EMPTY_SCOPE;
-
-        const elements: AstNodeDescription[] = [];
-        
-        // Add signature names (for type scoping in run/check commands)
-        elements.push(...this.collectSigNames(model));
-        // Add predicates and functions (callable elements)
-        elements.push(...this.collectPredicates(model));
-        elements.push(...this.collectFunctions(model));
-        
-        return this.createScope(elements);
-    }
-
-    private createCallableElementScope(context: ReferenceInfo): Scope {
-        const model = AstUtils.getContainerOfType(context.container, isAlloyModule);
-        if (!model) return EMPTY_SCOPE;
-
-        const elements: AstNodeDescription[] = [];
-        elements.push(...this.collectPredicates(model));
-        elements.push(...this.collectFunctions(model));
-        
-        return this.createScope(elements);
-    }
 
     private collectSigNames(model: AlloyModule): AstNodeDescription[] {
         const elements: AstNodeDescription[] = [];
-        
+
         for (const paragraph of model.paragraph) {
             if (paragraph.$type === 'SigDecl') {
                 const sigDecl = paragraph as SigDecl;
-                if (sigDecl.names) {
-                    for (const sigName of sigDecl.names) {
-                        elements.push(this.descriptions.createDescription(sigName, sigName.name));
+
+                // Add the primary signature name
+                if (sigDecl.name) {
+                    elements.push(this.descriptions.createDescription(sigDecl, sigDecl.name, sigDecl.$document));
+                }
+
+                // Add additional signature names - each has its own AST node now
+                if (sigDecl.additionalSigs) {
+                    for (const additionalSig of sigDecl.additionalSigs) {
+                        elements.push(this.descriptions.createDescription(additionalSig, additionalSig.name, additionalSig.$document));
                     }
                 }
             }
         }
-        
+
         return elements;
     }
 
     private collectFieldNames(model: AlloyModule): AstNodeDescription[] {
         const elements: AstNodeDescription[] = [];
-        
+
         for (const paragraph of model.paragraph) {
             if (paragraph.$type === 'SigDecl') {
                 const sigDecl = paragraph as SigDecl;
                 if (sigDecl.fields) {
                     for (const fieldDecl of sigDecl.fields) {
-                        if (fieldDecl.decl && fieldDecl.decl.names) {
-                            for (const fieldName of fieldDecl.decl.names) {
-                                elements.push(this.descriptions.createDescription(fieldName, fieldName.name));
+                        if (fieldDecl.decl) {
+                            // Add primary field name
+                            if (fieldDecl.decl.name) {
+                                elements.push(this.descriptions.createDescription(fieldDecl.decl, fieldDecl.decl.name));
+                            }
+                            // Add additional field names
+                            if (fieldDecl.decl.additionalNames) {
+                                for (const additionalName of fieldDecl.decl.additionalNames) {
+                                    elements.push(this.descriptions.createDescription(fieldDecl.decl, additionalName));
+                                }
                             }
                         }
                     }
                 }
             }
         }
-        
+
         return elements;
     }
 
     private collectPredicates(model: AlloyModule): AstNodeDescription[] {
         const elements: AstNodeDescription[] = [];
-        
+
         for (const paragraph of model.paragraph) {
             if (paragraph.$type === 'PredDecl') {
                 const predDecl = paragraph as PredDecl;
@@ -148,13 +132,13 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
                 }
             }
         }
-        
+
         return elements;
     }
 
     private collectFunctions(model: AlloyModule): AstNodeDescription[] {
         const elements: AstNodeDescription[] = [];
-        
+
         for (const paragraph of model.paragraph) {
             if (paragraph.$type === 'FunDecl') {
                 const funDecl = paragraph as FunDecl;
@@ -163,7 +147,7 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
                 }
             }
         }
-        
+
         return elements;
     }
 }

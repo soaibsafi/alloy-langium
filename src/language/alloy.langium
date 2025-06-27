@@ -1,12 +1,12 @@
 grammar Alloy
 
-type NamedElement = SigDecl | PredDecl | FunDecl | FactDecl | AssertDecl | FieldDecl | LetDecl | Decl | EnumDecl | MacroDecl
+type NamedElement = SigDecl | AdditionalSig | PredDecl | FunDecl | FactDecl | AssertDecl | FieldDecl | LetDecl | Decl | EnumDecl | MacroDecl
 
 entry AlloyModule:
     ModuleDecl? import+=Import* paragraph+=Paragraph*;
 
 ModuleDecl:
-    'module' qualName=QualName ('[' alias+=ID (',' alias+=ID)* ']')?; 
+    'module' qualName=ModulePath ('[' alias+=ID (',' alias+=ID)* ']')?; 
 
 Import:
     'open' qualName=QualName ('[' aliases+=QualName (',' aliases+=QualName)*']')? ('as' alias=ID)?;
@@ -21,8 +21,12 @@ MacroDecl:
 
 //sigDecl ::= [var] [abstract] [mult] sig name,+ [sigExt] { fieldDecl,* } [block]
 SigDecl:
-    'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalNames+=ID)* sigExt=SigExt? 
+    'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
     '{' (fields+=FieldDecl (',' fields+=FieldDecl)*)? '}' block=Block?;
+
+// Additional signature in a multi-signature declaration
+AdditionalSig:
+    name=ID;
     
 //sigExt ::= extends qualName | in qualName [+ qualName]*
 SigExt:
@@ -163,6 +167,10 @@ PrimaryExpr infers Expr:
 // qualName ::= [this/] ( name / )* name
 QualName:
     ('this/')? (names+=ID'/')* ID=[NamedElement:ID];
+
+// modulePath ::= [this/] ( name / )* name (for module declarations - no references needed)
+ModulePath:
+    ('this/')? (names+=ID'/')* name=ID;
 
 // const ::= [-] number | none | univ | iden
 Const:
