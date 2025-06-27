@@ -9,7 +9,7 @@ ModuleDecl:
     'module' qualName=ModulePath ('[' alias+=ID (',' alias+=ID)* ']')?; 
 
 Import:
-    'open' qualName=QualName ('[' aliases+=QualName (',' aliases+=QualName)*']')? ('as' alias=ID)?;
+    'open' qualName=ModulePath ('[' aliases+=ModulePath (',' aliases+=ModulePath)*']')? ('as' alias=ID)?;
 
 // paragraph ::= sigDecl | factDecl | predDecl | funDecl | assertDecl | cmdDecl | macroDecl
 Paragraph:
