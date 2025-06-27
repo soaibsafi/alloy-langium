@@ -1,5 +1,5 @@
 import { AstNodeDescription, DefaultScopeProvider, EMPTY_SCOPE, ReferenceInfo, Scope, AstUtils, AstNode } from 'langium';
-import { AlloyModule, SigDecl, AdditionalSig, PredDecl, FunDecl, QuantExpr, isAlloyModule, isQuantExpr, isDecl } from './generated/ast.js';
+import { AlloyModule, SigDecl, PredDecl, FunDecl, AssertDecl, QuantExpr, isAlloyModule, isQuantExpr, isDecl, isFunDecl, isPredDecl } from './generated/ast.js';
 
 export class AlloyScopeProvider extends DefaultScopeProvider {
 
@@ -33,6 +33,8 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
         elements.push(...this.collectPredicates(model));
         // Add all functions
         elements.push(...this.collectFunctions(model));
+        // Add all assertions
+        elements.push(...this.collectAssertions(model));
 
         return this.createScope(elements);
     }
@@ -53,6 +55,46 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
                                 elements.push(this.descriptions.createDescription(decl, decl.name));
                             }
                             // Add additional variable names
+                            if (decl.additionalNames) {
+                                for (const additionalName of decl.additionalNames) {
+                                    elements.push(this.descriptions.createDescription(decl, additionalName));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Check for function declarations with parameters
+            else if (isFunDecl(current)) {
+                const funDecl = current as FunDecl;
+                if (funDecl.paraDecls && funDecl.paraDecls.decls) {
+                    for (const decl of funDecl.paraDecls.decls) {
+                        if (isDecl(decl)) {
+                            // Add primary parameter name
+                            if (decl.name) {
+                                elements.push(this.descriptions.createDescription(decl, decl.name));
+                            }
+                            // Add additional parameter names
+                            if (decl.additionalNames) {
+                                for (const additionalName of decl.additionalNames) {
+                                    elements.push(this.descriptions.createDescription(decl, additionalName));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Check for predicate declarations with parameters
+            else if (isPredDecl(current)) {
+                const predDecl = current as PredDecl;
+                if (predDecl.paraDecls && predDecl.paraDecls.decls) {
+                    for (const decl of predDecl.paraDecls.decls) {
+                        if (isDecl(decl)) {
+                            // Add primary parameter name
+                            if (decl.name) {
+                                elements.push(this.descriptions.createDescription(decl, decl.name));
+                            }
+                            // Add additional parameter names
                             if (decl.additionalNames) {
                                 for (const additionalName of decl.additionalNames) {
                                     elements.push(this.descriptions.createDescription(decl, additionalName));
@@ -144,6 +186,21 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
                 const funDecl = paragraph as FunDecl;
                 if (funDecl.name) {
                     elements.push(this.descriptions.createDescription(funDecl, funDecl.name));
+                }
+            }
+        }
+
+        return elements;
+    }
+
+    private collectAssertions(model: AlloyModule): AstNodeDescription[] {
+        const elements: AstNodeDescription[] = [];
+
+        for (const paragraph of model.paragraph) {
+            if (paragraph.$type === 'AssertDecl') {
+                const assertDecl = paragraph as AssertDecl;
+                if (assertDecl.name) {
+                    elements.push(this.descriptions.createDescription(assertDecl, assertDecl.name));
                 }
             }
         }

@@ -134,13 +134,16 @@ RestrictionExpr infers Expr:
     BoxJoinExpr ({infer RestrictionExpr.left=current} ('<:' | ':>') right=BoxJoinExpr)*;
 
 BoxJoinExpr infers Expr:
-    DotJoinExpr ({infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']')*;
+    DotJoinExpr (
+        {infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']'
+        | {infer CallExpr.left=current} '[' args+=Expr (',' args+=Expr)* ']'  // function/predicate call
+    )*;
 
 DotJoinExpr infers Expr:
     PrimitiveExpr ({infer DotJoinExpr.left=current} ('.' | '.*' | '.^' | '.~') right=PrimitiveExpr)*;
 
 PrimitiveExpr infers Expr:
-    PrimeExpr ({infer PrimitiveExpr.left=current} qualName=QualName right=PrimeExpr)*;
+    PrimeExpr;
 
 PrimeExpr infers Expr:
     UnaryExpr ({infer PrimeExpr.left=current} PRIME)*;
@@ -157,7 +160,6 @@ PrimaryExpr infers Expr:
     | ({infer ParenExpr} '(' expr=Expr ')')
     | Block
     | ({infer SetExpr} '{' decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar '}')
-    | ({infer CallExpr} qualName=[NamedElement:ID] '[' args+=Expr (',' args+=Expr)* ']')  // function/predicate call
     | ({infer SumExpr} 'sum' decls+=Decl (',' decls+=Decl)* '|' expr=Expr)  // sum expression
     | ({infer MetaExpr} qualName=QualName '$')  // meta value
     | STRING  // string literal
