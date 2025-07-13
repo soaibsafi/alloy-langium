@@ -1,12 +1,15 @@
 grammar Alloy
 
-type NamedElement = SigDecl | AdditionalSig | PredDecl | FunDecl | FactDecl | AssertDecl | FieldDecl | LetDecl | Decl | EnumDecl | MacroDecl
+type NamedElement = SigDecl | AdditionalSig | PredDecl | FunDecl | FactDecl | AssertDecl | FieldDecl | LetDecl | Decl | EnumDecl | MacroDecl | ModuleParam
 
 entry AlloyModule:
     ModuleDecl? import+=Import* paragraph+=Paragraph*;
 
 ModuleDecl:
-    'module' qualName=ModulePath ('[' alias+=ID (',' alias+=ID)* ']')?; 
+    'module' qualName=ModulePath ('[' params+=ModuleParam (',' params+=ModuleParam)* ']')?; 
+
+ModuleParam:
+    exactly?='exactly'? name=ID;
 
 Import:
     'open' qualName=ModulePath ('[' aliases+=ModulePath (',' aliases+=ModulePath)*']')? ('as' alias=ID)?;
@@ -18,7 +21,7 @@ MacroDecl:
     'let' name=ID ('[' params+=ID (',' params+=ID)* ']')? '='? expr=Expr;
 
 SigDecl:
-    'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
+    'private'? 'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
     '{' (fields+=FieldDecl (',' fields+=FieldDecl)*)? '}' block=Block?;
 
 AdditionalSig:
