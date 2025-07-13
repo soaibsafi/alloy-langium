@@ -56,7 +56,7 @@ EnumDecl:
     'private'? 'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
 
 CmdDecl:
-    (name=ID ':')? (kind='run' | kind='check') (qualName=[NamedElement:ID] | block=Block) scope=Scope? 
+    (name=ID ':')? (kind='run' | kind='check') (qualName=[NamedElement:ID] | cmdName=ID block=Block | block=Block) scope=Scope? 
     ('expect' expectNum=INT)? ('=>' chainedCmd=CmdDecl)?;
 
 Scope:
