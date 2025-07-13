@@ -65,14 +65,14 @@ TypeScope:
 
 
 Expr:
-    SequenceExpr;
-
-SequenceExpr infers Expr:
-    QuantExpr ({infer SequenceExpr.left=current} ';' right=QuantExpr)*;
+    QuantExpr;
 
 QuantExpr infers Expr:
     ({infer QuantExpr} QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
-    | DisjunctionExpr;
+    | SequenceExpr;
+
+SequenceExpr infers Expr:
+    DisjunctionExpr ({infer SequenceExpr.left=current} ';' right=DisjunctionExpr)*;
 
 DisjunctionExpr infers Expr:
     BiImplicationExpr ({infer DisjunctionExpr.left=current} ('||' | 'or') right=BiImplicationExpr)*;
@@ -94,7 +94,7 @@ UnaryLogicalExpr infers Expr:
     | UnaryMultExpr;
 
 UnaryMultExpr infers Expr:
-    ({infer UnaryMultExpr} ('no' | 'some' | 'lone' | 'one' | 'set') expr=UnaryMultExpr)
+    ({infer UnaryMultExpr} ('no' | 'lone' | 'one' | 'some' | 'set') expr=UnaryMultExpr)
     | ComparisonExpr;
 
 ComparisonExpr infers Expr:
@@ -166,13 +166,16 @@ Const:
     '-'? number=(INT | HEX_INT | BIN_INT) | 'none' | 'univ' | 'iden';
 
 ArrowOp:
-    (leftMult=MULT | leftSet='set')? '->' (rightMult=MULT | rightSet='set')?;
+    (leftMult=('lone' | 'one') | leftSet='set')? '->' (rightMult=MULT | rightSet='set')?;
 
 LetDecl:
     name=ID '=' expr=Expr;
 
 Block:
-    '{' (exprs+=Expr)* '}';
+    '{' statements+=BlockStatement* '}';
+
+BlockStatement:
+    expr=Expr ';'?;
 
 BlockOrBar:
     block=Block | '|' expr=Expr;
@@ -180,7 +183,7 @@ BlockOrBar:
 CompareOp returns string:
     'in' | '=' | '<' | '>' | '=<' | '>=';
 
-QUANT returns string: 'all' | 'no' | 'sum' | MULT;
+QUANT returns string: 'all' | 'no' | 'sum' | 'some';
 
 MULT returns string: 'lone' | 'some' | 'one';
 
