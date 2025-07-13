@@ -183,7 +183,7 @@ BlockOrBar:
 CompareOp returns string:
     'in' | '=' | '<' | '>' | '=<' | '>=';
 
-QUANT returns string: 'all' | 'no' | 'sum' | 'some';
+QUANT returns string: 'all' | 'no' | 'sum' | 'some' | 'lone' | 'one';
 
 MULT returns string: 'lone' | 'some' | 'one';
 
