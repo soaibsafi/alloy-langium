@@ -120,16 +120,15 @@ ArrowExpr infers Expr:
     RestrictionExpr ({infer ArrowExpr.left=current} arrows+=ArrowOp right=RestrictionExpr)*;
 
 RestrictionExpr infers Expr:
-    BoxJoinExpr ({infer RestrictionExpr.left=current} ('<:' | ':>') right=BoxJoinExpr)*;
-
-BoxJoinExpr infers Expr:
-    DotJoinExpr (
-        {infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']'
-        | {infer CallExpr.left=current} '[' args+=Expr (',' args+=Expr)* ']'  
-    )*;
+    DotJoinExpr ({infer RestrictionExpr.left=current} ('<:' | ':>') right=DotJoinExpr)*;
 
 DotJoinExpr infers Expr:
-    PrimitiveExpr ({infer DotJoinExpr.left=current} ('.' | '.*' | '.^' | '.~') right=PrimitiveExpr)*;
+    BoxJoinExpr ({infer DotJoinExpr.left=current} ('.' | '.*' | '.^' | '.~') right=BoxJoinExpr)*;
+
+BoxJoinExpr infers Expr:
+    PrimitiveExpr (
+        {infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']'
+    )*;
 
 PrimitiveExpr infers Expr:
     PrimeExpr;
