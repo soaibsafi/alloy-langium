@@ -1,5 +1,5 @@
 import { AstNodeDescription, DefaultScopeProvider, EMPTY_SCOPE, ReferenceInfo, Scope, AstUtils, AstNode } from 'langium';
-import { AlloyModule, SigDecl, PredDecl, FunDecl, AssertDecl, QuantExpr, isAlloyModule, isQuantExpr, isDecl, isFunDecl, isPredDecl, isLetDecl } from './generated/ast.js';
+import { AlloyModule, SigDecl, PredDecl, FunDecl, AssertDecl, QuantExpr, SetExpr, LetExpr, EnumDecl, isAlloyModule, isQuantExpr, isSetExpr, isLetExpr, isDecl, isFunDecl, isPredDecl, isModuleDecl } from './generated/ast.js';
 
 export class AlloyScopeProvider extends DefaultScopeProvider {
 
@@ -25,10 +25,17 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
         // Add local quantified variables first (they have priority)
         elements.push(...this.collectLocalVariables(context));
 
+        // Add module parameters
+        elements.push(...this.collectModuleParameters(model));
+
         // Add all signature names
         elements.push(...this.collectSigNames(model));
         // Add all field names
         elements.push(...this.collectFieldNames(model));
+        // Add all enum declarations (type names like Color)
+        elements.push(...this.collectEnumDeclarations(model));
+        // Add all enum values
+        elements.push(...this.collectEnumValues(model));
         // Add all predicates
         elements.push(...this.collectPredicates(model));
         // Add all functions
@@ -51,19 +58,38 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
                     for (const decl of quantExpr.decls) {
                         if (isDecl(decl)) {
                             // Add primary variable name
-                            if (decl.name) {
-                                elements.push(this.descriptions.createDescription(decl, decl.name));
+                            if (decl.name && decl.name.name) {
+                                elements.push(this.descriptions.createDescription(decl, decl.name.name));
                             }
                             // Add additional variable names
                             if (decl.additionalNames) {
                                 for (const additionalName of decl.additionalNames) {
-                                    elements.push(this.descriptions.createDescription(decl, additionalName));
+                                    if (additionalName.name) {
+                                        elements.push(this.descriptions.createDescription(decl, additionalName.name));
+                                    }
                                 }
                             }
-                        } else if (isLetDecl(decl)) {
-                            // Add let-bound variable name
-                            if (decl.name) {
-                                elements.push(this.descriptions.createDescription(decl, decl.name));
+                        }
+                    }
+                }
+            }
+            // Check for set comprehension expressions that introduce variables
+            else if (isSetExpr(current)) {
+                const setExpr = current as SetExpr;
+                if (setExpr.decls) {
+                    for (const decl of setExpr.decls) {
+                        if (isDecl(decl)) {
+                            // Add primary variable name
+                            if (decl.name && decl.name.name) {
+                                elements.push(this.descriptions.createDescription(decl, decl.name.name));
+                            }
+                            // Add additional variable names
+                            if (decl.additionalNames) {
+                                for (const additionalName of decl.additionalNames) {
+                                    if (additionalName.name) {
+                                        elements.push(this.descriptions.createDescription(decl, additionalName.name));
+                                    }
+                                }
                             }
                         }
                     }
@@ -76,13 +102,15 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
                     for (const decl of funDecl.paraDecls.decls) {
                         if (isDecl(decl)) {
                             // Add primary parameter name
-                            if (decl.name) {
-                                elements.push(this.descriptions.createDescription(decl, decl.name));
+                            if (decl.name && decl.name.name) {
+                                elements.push(this.descriptions.createDescription(decl, decl.name.name));
                             }
                             // Add additional parameter names
                             if (decl.additionalNames) {
                                 for (const additionalName of decl.additionalNames) {
-                                    elements.push(this.descriptions.createDescription(decl, additionalName));
+                                    if (additionalName.name) {
+                                        elements.push(this.descriptions.createDescription(decl, additionalName.name));
+                                    }
                                 }
                             }
                         }
@@ -96,15 +124,28 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
                     for (const decl of predDecl.paraDecls.decls) {
                         if (isDecl(decl)) {
                             // Add primary parameter name
-                            if (decl.name) {
-                                elements.push(this.descriptions.createDescription(decl, decl.name));
+                            if (decl.name && decl.name.name) {
+                                elements.push(this.descriptions.createDescription(decl, decl.name.name));
                             }
                             // Add additional parameter names
                             if (decl.additionalNames) {
                                 for (const additionalName of decl.additionalNames) {
-                                    elements.push(this.descriptions.createDescription(decl, additionalName));
+                                    if (additionalName.name) {
+                                        elements.push(this.descriptions.createDescription(decl, additionalName.name));
+                                    }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+            // Check for let expressions that introduce variables
+            else if (isLetExpr(current)) {
+                const letExpr = current as LetExpr;
+                if (letExpr.decls) {
+                    for (const letDecl of letExpr.decls) {
+                        if (letDecl.name) {
+                            elements.push(this.descriptions.createDescription(letDecl, letDecl.name));
                         }
                     }
                 }
@@ -115,6 +156,20 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
         return elements;
     }
 
+    private collectModuleParameters(model: AlloyModule): AstNodeDescription[] {
+        const elements: AstNodeDescription[] = [];
+
+        // Check if the model is a ModuleDecl with parameters
+        if (isModuleDecl(model) && model.params) {
+            for (const param of model.params) {
+                if (param.name) {
+                    elements.push(this.descriptions.createDescription(param, param.name, param.$document));
+                }
+            }
+        }
+
+        return elements;
+    }
 
     private collectSigNames(model: AlloyModule): AstNodeDescription[] {
         const elements: AstNodeDescription[] = [];
@@ -150,16 +205,54 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
                     for (const fieldDecl of sigDecl.fields) {
                         if (fieldDecl.decl) {
                             // Add primary field name
-                            if (fieldDecl.decl.name) {
-                                elements.push(this.descriptions.createDescription(fieldDecl.decl, fieldDecl.decl.name));
+                            if (fieldDecl.decl.name && fieldDecl.decl.name.name) {
+                                elements.push(this.descriptions.createDescription(fieldDecl.decl, fieldDecl.decl.name.name));
                             }
                             // Add additional field names
                             if (fieldDecl.decl.additionalNames) {
                                 for (const additionalName of fieldDecl.decl.additionalNames) {
-                                    elements.push(this.descriptions.createDescription(fieldDecl.decl, additionalName));
+                                    if (additionalName.name) {
+                                        elements.push(this.descriptions.createDescription(fieldDecl.decl, additionalName.name));
+                                    }
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        return elements;
+    }
+
+    private collectEnumDeclarations(model: AlloyModule): AstNodeDescription[] {
+        const elements: AstNodeDescription[] = [];
+
+        for (const paragraph of model.paragraph) {
+            if (paragraph.$type === 'EnumDecl') {
+                const enumDecl = paragraph as EnumDecl;
+                
+                // Add enum type name like Color from enum Color {GREEN, RED}
+                if (enumDecl.name) {
+                    elements.push(this.descriptions.createDescription(enumDecl, enumDecl.name, enumDecl.$document));
+                }
+            }
+        }
+
+        return elements;
+    }
+
+    private collectEnumValues(model: AlloyModule): AstNodeDescription[] {
+        const elements: AstNodeDescription[] = [];
+
+        for (const paragraph of model.paragraph) {
+            if (paragraph.$type === 'EnumDecl') {
+                const enumDecl = paragraph as EnumDecl;
+                
+                // Add enum values like GREEN, RED from enum Color {GREEN, RED}
+                if (enumDecl.values) {
+                    for (const value of enumDecl.values) {
+                        elements.push(this.descriptions.createDescription(enumDecl, value, enumDecl.$document));
                     }
                 }
             }
