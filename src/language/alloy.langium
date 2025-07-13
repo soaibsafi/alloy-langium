@@ -34,7 +34,7 @@ Decl:
     'disj'? name=QualDeclName (',' additionalNames+=QualDeclName)* ':' 'disj'? expr=Expr;
 
 FactDecl:
-    'fact' name=QualName? block=Block;
+    'fact' name=ID? block=Block;
 
 PredDecl:
     'pred' (qualName=[NamedElement:ID] '.')? name=ID paraDecls=ParaDecls? block=Block;
