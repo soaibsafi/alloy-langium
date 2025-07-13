@@ -198,5 +198,6 @@ terminal BIN_INT: /0b[01]+/;
 terminal STRING: /"([^"\\]|\\.)*"/;
 
 hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
-hidden terminal SL_COMMENT: /(?:\/\/|--)[^\n\r]*/;
+hidden terminal SL_COMMENT_SLASH: /\/\/[^\n\r]*/;
+hidden terminal SL_COMMENT_DASH: /--[^\n\r]*/;
 
