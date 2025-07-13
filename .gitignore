@@ -8,4 +8,4 @@ src/language/generated/
 syntaxes/
 resources/
 test-results/
-src/.DS_Store
+**/.DS_Store
