@@ -11,76 +11,59 @@ ModuleDecl:
 Import:
     'open' qualName=ModulePath ('[' aliases+=ModulePath (',' aliases+=ModulePath)*']')? ('as' alias=ID)?;
 
-// paragraph ::= sigDecl | factDecl | predDecl | funDecl | assertDecl | cmdDecl | macroDecl
 Paragraph:
     SigDecl | FactDecl | PredDecl | FunDecl | AssertDecl | CmdDecl | EnumDecl | MacroDecl;
 
-// macroDecl ::= let name [ names ]? =? expr
 MacroDecl:
     'let' name=ID ('[' params+=ID (',' params+=ID)* ']')? '='? expr=Expr;
 
-//sigDecl ::= [var] [abstract] [mult] sig name,+ [sigExt] { fieldDecl,* } [block]
 SigDecl:
     'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
     '{' (fields+=FieldDecl (',' fields+=FieldDecl)*)? '}' block=Block?;
 
-// Additional signature in a multi-signature declaration
 AdditionalSig:
     name=ID;
     
-//sigExt ::= extends qualName | in qualName [+ qualName]*
 SigExt:
     'extends' qualName=[NamedElement:ID] | 'in' qualName=[NamedElement:ID] ('+' qualNames+=[NamedElement:ID])*;
 
-// fieldDecl ::= [var] decl
 FieldDecl:
     'var'? decl=Decl;
 
-//decl ::= [disj] name,+ : [disj] expr
 Decl:
-    'disj'? name=ID (',' additionalNames+=ID)* ':' 'disj'? expr=Expr;
+    'disj'? name=QualDeclName (',' additionalNames+=QualDeclName)* ':' 'disj'? expr=Expr;
 
-//factDecl ::= fact [name] block
 FactDecl:
-    'fact' name=ID? block=Block;
+    'fact' name=QualName? block=Block;
 
-// predDecl ::= pred [qualName .] name [paraDecls] block
 PredDecl:
     'pred' (qualName=[NamedElement:ID] '.')? name=ID paraDecls=ParaDecls? block=Block;
 
-// funDecl ::= fun [qualName .] name [paraDecls] : [mult] expr expr | fun [qualName .] name [paraDecls] : expr { expr }
 FunDecl:
     'fun' (qualName=[NamedElement:ID] '.')? name=ID paraDecls=ParaDecls? ':' 
     (mult=MULT? first=Expr second=Expr | retType=Expr '{' body=Expr '}');
 
-// paraDecls ::= ( decl,* ) | [ decl,* ]
 ParaDecls:
     '(' (decls+=Decl (',' decls+=Decl)*)? ')' | '[' (decls+=Decl (',' decls+=Decl)*)? ']';
 
-// assertDecl ::= assert [name] block
 AssertDecl:
     'assert' name=ID? block=Block;
 
-// enumDecl ::= [private] enum name { name,+ }
 EnumDecl:
     'private'? 'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
 
-// cmdDecl ::= [name :] ( run | check ) ( qualName | block ) [scope] [expect number] [=> cmdDecl]
 CmdDecl:
     (name=ID ':')? (kind='run' | kind='check') (qualName=[NamedElement:ID] | block=Block) scope=Scope? 
     ('expect' expectNum=INT)? ('=>' chainedCmd=CmdDecl)?;
 
-// scope ::= for number [but typescope,+] | for typescope,+ [expect number]
 Scope:
     'for' number=INT ('but' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*)? 
     | 'for' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*;
 
-// typescope ::= [exactly] number [.. [number [: number]]] qualName
 TypeScope:
     'exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? qualName=[NamedElement:ID];
 
 
-// Expression with precedence (from lowest to highest precedence)
 Expr:
     SequenceExpr;
 
@@ -88,8 +71,7 @@ SequenceExpr infers Expr:
     QuantExpr ({infer SequenceExpr.left=current} ';' right=QuantExpr)*;
 
 QuantExpr infers Expr:
-    ({infer QuantExpr} 'let' decls+=LetDecl (',' decls+=LetDecl)* blockOrBar=BlockOrBar)
-    | ({infer QuantExpr} QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
+    ({infer QuantExpr} QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
     | DisjunctionExpr;
 
 DisjunctionExpr infers Expr:
@@ -109,6 +91,10 @@ ConjunctionExpr infers Expr:
 
 UnaryLogicalExpr infers Expr:
     ({infer UnaryLogicalExpr} ('!' | 'not' | 'always' | 'eventually' | 'after' | 'before' | 'historically' | 'once') expr=UnaryLogicalExpr)
+    | UnaryMultExpr;
+
+UnaryMultExpr infers Expr:
+    ({infer UnaryMultExpr} ('no' | 'some' | 'lone' | 'one' | 'set') expr=UnaryMultExpr)
     | ComparisonExpr;
 
 ComparisonExpr infers Expr:
@@ -136,7 +122,7 @@ RestrictionExpr infers Expr:
 BoxJoinExpr infers Expr:
     DotJoinExpr (
         {infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']'
-        | {infer CallExpr.left=current} '[' args+=Expr (',' args+=Expr)* ']'  // function/predicate call
+        | {infer CallExpr.left=current} '[' args+=Expr (',' args+=Expr)* ']'  
     )*;
 
 DotJoinExpr infers Expr:
@@ -149,7 +135,7 @@ PrimeExpr infers Expr:
     UnaryExpr ({infer PrimeExpr.left=current} PRIME)*;
 
 UnaryExpr infers Expr:
-    ({infer UnaryExpr} ('~' | '^' | '*' | 'no' | 'some' | 'lone' | 'one' | 'set') expr=UnaryExpr)
+    ({infer UnaryExpr} ('~' | '^' | '*') expr=UnaryExpr)
     | PrimaryExpr;
 
 PrimaryExpr infers Expr:
@@ -160,45 +146,40 @@ PrimaryExpr infers Expr:
     | ({infer ParenExpr} '(' expr=Expr ')')
     | Block
     | ({infer SetExpr} '{' decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar '}')
-    | ({infer SumExpr} 'sum' decls+=Decl (',' decls+=Decl)* '|' expr=Expr)  // sum expression
-    | ({infer MetaExpr} qualName=QualName '$')  // meta value
-    | STRING  // string literal
+    | ({infer SumExpr} 'sum' decls+=Decl (',' decls+=Decl)* '|' expr=Expr)  
+    | ({infer LetExpr} 'let' decls+=LetDecl (',' decls+=LetDecl)* blockOrBar=BlockOrBar)  
+    | ({infer MetaExpr} qualName=QualName '$')  
+    | STRING  
     ;
 
 
-// qualName ::= [this/] ( name / )* name
 QualName:
     ('this/')? (names+=ID'/')* ID=[NamedElement:ID];
 
-// modulePath ::= [this/] ( name / )* name (for module declarations - no references needed)
+QualDeclName:
+    ('this/')? (names+=ID'/')* name=ID;
+
 ModulePath:
     ('this/')? (names+=ID'/')* name=ID;
 
-// const ::= [-] number | none | univ | iden
 Const:
     '-'? number=(INT | HEX_INT | BIN_INT) | 'none' | 'univ' | 'iden';
 
-// ArrowOp ::= [mult | set] -> [mult | set]
 ArrowOp:
     (leftMult=MULT | leftSet='set')? '->' (rightMult=MULT | rightSet='set')?;
 
-// letDecl ::= name = expr
 LetDecl:
     name=ID '=' expr=Expr;
 
-//block ::= { expr* }
 Block:
     '{' (exprs+=Expr)* '}';
 
-// blockOrBar ::= block | bar expr
 BlockOrBar:
     block=Block | '|' expr=Expr;
 
-// Comparison operators including negated forms  
 CompareOp returns string:
     'in' | '=' | '<' | '>' | '=<' | '>=';
 
-// quant ::= all | no | sum | mult
 QUANT returns string: 'all' | 'no' | 'sum' | MULT;
 
 MULT returns string: 'lone' | 'some' | 'one';

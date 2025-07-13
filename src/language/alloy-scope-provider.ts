@@ -1,5 +1,5 @@
 import { AstNodeDescription, DefaultScopeProvider, EMPTY_SCOPE, ReferenceInfo, Scope, AstUtils, AstNode } from 'langium';
-import { AlloyModule, SigDecl, PredDecl, FunDecl, AssertDecl, QuantExpr, isAlloyModule, isQuantExpr, isDecl, isFunDecl, isPredDecl } from './generated/ast.js';
+import { AlloyModule, SigDecl, PredDecl, FunDecl, AssertDecl, QuantExpr, isAlloyModule, isQuantExpr, isDecl, isFunDecl, isPredDecl, isLetDecl } from './generated/ast.js';
 
 export class AlloyScopeProvider extends DefaultScopeProvider {
 
@@ -59,6 +59,11 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
                                 for (const additionalName of decl.additionalNames) {
                                     elements.push(this.descriptions.createDescription(decl, additionalName));
                                 }
+                            }
+                        } else if (isLetDecl(decl)) {
+                            // Add let-bound variable name
+                            if (decl.name) {
+                                elements.push(this.descriptions.createDescription(decl, decl.name));
                             }
                         }
                     }

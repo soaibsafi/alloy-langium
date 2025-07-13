@@ -10,7 +10,7 @@ import { AlloyScopeProvider } from './alloy-scope-provider.js';
  */
 export type AlloyAddedServices = {
     validation: {
-        AlloyValidator: AlloyValidator
+        // AlloyValidator: AlloyValidator
     }
 }
 
@@ -27,13 +27,13 @@ export type AlloyServices = LangiumServices & AlloyAddedServices
  */
 export const AlloyModule: Module<AlloyServices, PartialLangiumServices & AlloyAddedServices> = {
     validation: {
-        AlloyValidator: () => new AlloyValidator()
+        // AlloyValidator: () => new AlloyValidator()
     },
     references: {
-        ScopeProvider: (services) => new AlloyScopeProvider(services)
+        // ScopeProvider: (services) => new AlloyScopeProvider(services)
     },
     lsp: {
-        CompletionProvider: (services) => new AlloyCompletionProvider(services)
+        // CompletionProvider: (services) => new AlloyCompletionProvider(services)
     }
 };
 
