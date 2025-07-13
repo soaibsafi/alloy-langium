@@ -22,7 +22,7 @@ MacroDecl:
 
 SigDecl:
     'private'? 'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
-    '{' (fields+=FieldDecl (',' fields+=FieldDecl)*)? '}' block=Block?;
+    '{' (fields+=FieldDecl (',' fields+=FieldDecl)* ','?)? '}' block=Block?;
 
 AdditionalSig:
     name=ID;
@@ -64,15 +64,11 @@ Scope:
     | 'for' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*;
 
 TypeScope:
-    'exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? qualName=[NamedElement:ID];
+    'exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? (qualName=[NamedElement:ID] | builtin=('int' | 'Int'));
 
 
 Expr:
-    QuantExpr;
-
-QuantExpr infers Expr:
-    ({infer QuantExpr} QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
-    | SequenceExpr;
+    SequenceExpr;
 
 SequenceExpr infers Expr:
     DisjunctionExpr ({infer SequenceExpr.left=current} ';' right=DisjunctionExpr)*;
@@ -84,7 +80,11 @@ BiImplicationExpr infers Expr:
     ImplicationExpr ({infer BiImplicationExpr.left=current} ('<=>' | 'iff') right=ImplicationExpr)*;
 
 ImplicationExpr infers Expr:
-    BinaryTemporalExpr ({infer ImplicationExpr.left=current} ('=>' | 'implies') right=ImplicationExpr ('else' elseExpr=ImplicationExpr)?)?;
+    QuantExpr ({infer ImplicationExpr.left=current} ('=>' | 'implies') right=QuantExpr ('else' elseExpr=QuantExpr)?)?;
+
+QuantExpr infers Expr:
+    ({infer QuantExpr} QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
+    | BinaryTemporalExpr;
 
 BinaryTemporalExpr infers Expr:
     ConjunctionExpr ({infer BinaryTemporalExpr.left=current} ('until' | 'releases' | 'since' | 'triggered') right=ConjunctionExpr)*;
@@ -165,7 +165,7 @@ ModulePath:
     ('this/')? (names+=ID'/')* name=ID;
 
 Const:
-    '-'? number=(INT | HEX_INT | BIN_INT) | 'none' | 'univ' | 'iden';
+    '-'? number=(INT | HEX_INT | BIN_INT) | 'none' | 'univ' | 'iden' | 'Int' | 'String' | 'int';
 
 ArrowOp:
     (leftMult=('lone' | 'one') | leftSet='set')? '->' (rightMult=MULT | rightSet='set')?;
