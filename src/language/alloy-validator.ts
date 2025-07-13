@@ -1,5 +1,5 @@
-import type { ValidationAcceptor, ValidationChecks } from 'langium';
-import type { AlloyAstType, Person } from './generated/ast.js';
+import type { ValidationChecks } from 'langium';
+import type { AlloyAstType } from './generated/ast.js';
 import type { AlloyServices } from './alloy-module.js';
 
 /**
@@ -9,7 +9,7 @@ export function registerValidationChecks(services: AlloyServices) {
     const registry = services.validation.ValidationRegistry;
     const validator = services.validation.AlloyValidator;
     const checks: ValidationChecks<AlloyAstType> = {
-        Person: validator.checkPersonStartsWithCapital
+        // Add your custom validation checks here
     };
     registry.register(checks, validator);
 }
@@ -18,14 +18,5 @@ export function registerValidationChecks(services: AlloyServices) {
  * Implementation of custom validations.
  */
 export class AlloyValidator {
-
-    checkPersonStartsWithCapital(person: Person, accept: ValidationAcceptor): void {
-        if (person.name) {
-            const firstChar = person.name.substring(0, 1);
-            if (firstChar.toUpperCase() !== firstChar) {
-                accept('warning', 'Person name should start with a capital.', { node: person, property: 'name' });
-            }
-        }
-    }
-
+    // Add custom validation methods here
 }

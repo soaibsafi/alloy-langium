@@ -6,3 +6,6 @@ node_modules/
 out/
 src/language/generated/
 syntaxes/
+resources/
+test-results/
+**/.DS_Store
