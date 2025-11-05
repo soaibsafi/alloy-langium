@@ -28,7 +28,7 @@ AdditionalSig:
     name=ID;
     
 SigExt:
-    'extends' qualName=[NamedElement:ID] | 'in' qualName=[NamedElement:ID] ('+' qualNames+=[NamedElement:ID])*;
+    keyword=('extends' | 'in') parent=QualName ('+' additionalParents+=QualName)*;
 
 FieldDecl:
     'var'? decl=Decl;
@@ -40,10 +40,10 @@ FactDecl:
     'fact' name=ID? block=Block;
 
 PredDecl:
-    'pred' (qualName=[NamedElement:ID] '.')? name=ID paraDecls=ParaDecls? block=Block;
+    'pred' (qualifier=QualName '.')? name=ID paraDecls=ParaDecls? block=Block;
 
 FunDecl:
-    'fun' (qualName=[NamedElement:ID] '.')? name=ID paraDecls=ParaDecls? ':' 
+    'fun' (qualifier=QualName '.')? name=ID paraDecls=ParaDecls? ':' 
     (mult=MULT? first=Expr second=Expr | retType=Expr '{' body=Expr '}');
 
 ParaDecls:
@@ -56,7 +56,7 @@ EnumDecl:
     'private'? 'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
 
 CmdDecl:
-    (name=ID ':')? (kind='run' | kind='check') (qualName=[NamedElement:ID] | cmdName=ID block=Block | block=Block) scope=Scope? 
+    (name=ID ':')? (kind='run' | kind='check') (predicate=QualName | block=Block) scope=Scope? 
     ('expect' expectNum=INT)? ('=>' chainedCmd=CmdDecl)?;
 
 Scope:
@@ -64,7 +64,7 @@ Scope:
     | 'for' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*;
 
 TypeScope:
-    'exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? (qualName=[NamedElement:ID] | builtin=('int' | 'Int'));
+    'exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? (type=QualName | builtin=('int' | 'Int'));
 
 
 Expr:

@@ -1,5 +1,18 @@
-import { AstNodeDescription, DefaultScopeProvider, EMPTY_SCOPE, ReferenceInfo, Scope, AstUtils, AstNode } from 'langium';
-import { AlloyModule, SigDecl, PredDecl, FunDecl, AssertDecl, QuantExpr, SetExpr, LetExpr, EnumDecl, isAlloyModule, isQuantExpr, isSetExpr, isLetExpr, isDecl, isFunDecl, isPredDecl, isModuleDecl } from './generated/ast.js';
+import { AstNodeDescription, DefaultScopeProvider, EMPTY_SCOPE, ReferenceInfo, Scope, AstUtils, AstNode, LangiumDocuments } from 'langium';
+import type { LangiumServices } from 'langium/lsp';
+import { AlloyModule, SigDecl, PredDecl, FunDecl, AssertDecl, QuantExpr, SetExpr, LetExpr, EnumDecl, Import, ModulePath, NamedElement, isAlloyModule, isQuantExpr, isSetExpr, isLetExpr, isDecl, isFunDecl, isPredDecl, isModuleDecl, isQualName } from './generated/ast.js';
+
+const IMPORTABLE_TYPES = new Set<string>([
+    'AdditionalSig',
+    'AssertDecl',
+    'EnumDecl',
+    'FactDecl',
+    'FieldDecl',
+    'FunDecl',
+    'MacroDecl',
+    'PredDecl',
+    'SigDecl'
+]);
 
 /**
  * Custom scope provider for the Alloy language that handles name resolution.
@@ -14,6 +27,13 @@ import { AlloyModule, SigDecl, PredDecl, FunDecl, AssertDecl, QuantExpr, SetExpr
  */
 export class AlloyScopeProvider extends DefaultScopeProvider {
 
+    private readonly documents: LangiumDocuments;
+
+    constructor(services: LangiumServices) {
+        super(services);
+        this.documents = services.shared.workspace.LangiumDocuments;
+    }
+
     /**
      * Main entry point for scope resolution. Called by Langium when resolving references.
      * 
@@ -22,8 +42,6 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
      */
     override getScope(context: ReferenceInfo): Scope {
         const referenceType = this.reflection.getReferenceType(context);
-        console.log('Reference type:', referenceType, 'for property:', context.property);
-
         // Handle different reference types with union types
         if (referenceType === 'NamedElement') {
             // NamedElement is the main type for all named constructs in Alloy
@@ -55,9 +73,8 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
         // Priority 2: Module parameters (e.g., module myModule[Elem])
         elements.push(...this.collectModuleParameters(model));
 
-        // Priority 3: Imported names from open statements (e.g., first, last from util/ordering)
-        // Note: collectImportedNames method needs to be implemented if not present
-        // elements.push(...this.collectImportedNames(model));
+    // Priority 3: Imported names from open statements (e.g., util/ordering)
+    elements.push(...this.collectImportedNames(model, context));
 
         // Priority 4-6: Global declarations within the module
         elements.push(...this.collectSigNames(model));        // Signature names
@@ -69,6 +86,103 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
         elements.push(...this.collectAssertions(model));      // Assertion names
 
         return this.createScope(elements);
+    }
+
+    /**
+     * Collects names exported by imported modules that are visible at the current reference location.
+     * Handles both alias-based imports (open util/ordering as ord) and plain imports.
+     */
+    private collectImportedNames(model: AlloyModule, context: ReferenceInfo): AstNodeDescription[] {
+        if (model.import.length === 0) {
+            return [];
+        }
+
+        const qualifierSegments = this.getQualifierSegments(context);
+        const relevantImports = model.import.filter(imp => this.matchesImportQualifier(imp, qualifierSegments));
+
+        if (relevantImports.length === 0) {
+            return [];
+        }
+
+        const targetModulePaths = new Set<string>(relevantImports.map(imp => this.modulePathToString(imp.qualName)));
+        const modulePathCache = new Map<string, string | null>();
+        const result: AstNodeDescription[] = [];
+
+        for (const description of this.indexManager.allElements(NamedElement)) {
+            if (!description.documentUri || !description.name) {
+                continue;
+            }
+
+            const containerType = (description as AstNodeDescription & { containerType?: string }).containerType;
+            const isFieldDecl = description.type === 'FieldDecl'
+                || (description.type === 'Decl' && containerType === 'FieldDecl');
+            if (!isFieldDecl && (!description.type || !IMPORTABLE_TYPES.has(description.type))) {
+                continue;
+            }
+
+            const uriKey = description.documentUri.toString();
+            let modulePath = modulePathCache.get(uriKey);
+            if (modulePath === undefined) {
+                const document = this.documents.getDocument(description.documentUri);
+                if (!document) {
+                    modulePathCache.set(uriKey, null);
+                    continue;
+                }
+
+                const root = document.parseResult?.value;
+                if (root && isModuleDecl(root)) {
+                    modulePath = this.modulePathToString(root.qualName);
+                } else {
+                    modulePath = null;
+                }
+                modulePathCache.set(uriKey, modulePath);
+            }
+
+            if (!modulePath || !targetModulePaths.has(modulePath)) {
+                continue;
+            }
+
+            result.push(description);
+        }
+
+        return result;
+    }
+
+    private getQualifierSegments(context: ReferenceInfo): string[] | undefined {
+        if (isQualName(context.container) && context.reference === context.container.ID) {
+            return context.container.names;
+        }
+        return undefined;
+    }
+
+    private matchesImportQualifier(imp: Import, qualifierSegments: string[] | undefined): boolean {
+        const moduleSegments = this.modulePathToSegments(imp.qualName);
+
+        if (!qualifierSegments || qualifierSegments.length === 0) {
+            // Allow both plain and aliased imports to contribute unqualified names
+            return true;
+        }
+
+        if (imp.alias && qualifierSegments.length === 1 && qualifierSegments[0] === imp.alias) {
+            return true;
+        }
+
+        return this.areSegmentsEqual(qualifierSegments, moduleSegments);
+    }
+
+    private modulePathToSegments(path: ModulePath): string[] {
+        return [...path.names, path.name];
+    }
+
+    private modulePathToString(path: ModulePath): string {
+        return this.modulePathToSegments(path).join('/');
+    }
+
+    private areSegmentsEqual(a: string[], b: string[]): boolean {
+        if (a.length !== b.length) {
+            return false;
+        }
+        return a.every((segment, index) => segment === b[index]);
     }
 
     /**

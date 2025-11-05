@@ -1,95 +1,77 @@
 grammar Alloy
 
-type NamedElement = SigDecl | AdditionalSig | PredDecl | FunDecl | FactDecl | AssertDecl | FieldDecl | LetDecl | Decl | EnumDecl | MacroDecl
+type NamedElement = SigDecl | AdditionalSig | PredDecl | FunDecl | FactDecl | AssertDecl | FieldDecl | LetDecl | Decl | EnumDecl | MacroDecl | ModuleParam
 
 entry AlloyModule:
     ModuleDecl? import+=Import* paragraph+=Paragraph*;
 
 ModuleDecl:
-    'module' qualName=ModulePath ('[' alias+=ID (',' alias+=ID)* ']')?; 
+    'module' qualName=ModulePath ('[' params+=ModuleParam (',' params+=ModuleParam)* ']')?; 
+
+ModuleParam:
+    exactly?='exactly'? name=ID;
 
 Import:
     'open' qualName=ModulePath ('[' aliases+=ModulePath (',' aliases+=ModulePath)*']')? ('as' alias=ID)?;
 
-// paragraph ::= sigDecl | factDecl | predDecl | funDecl | assertDecl | cmdDecl | macroDecl
 Paragraph:
     SigDecl | FactDecl | PredDecl | FunDecl | AssertDecl | CmdDecl | EnumDecl | MacroDecl;
 
-// macroDecl ::= let name [ names ]? =? expr
 MacroDecl:
     'let' name=ID ('[' params+=ID (',' params+=ID)* ']')? '='? expr=Expr;
 
-//sigDecl ::= [var] [abstract] [mult] sig name,+ [sigExt] { fieldDecl,* } [block]
 SigDecl:
-    'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
-    '{' (fields+=FieldDecl (',' fields+=FieldDecl)*)? '}' block=Block?;
+    'private'? 'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
+    '{' (fields+=FieldDecl (',' fields+=FieldDecl)* ','?)? '}' block=Block?;
 
-// Additional signature in a multi-signature declaration
 AdditionalSig:
     name=ID;
     
-//sigExt ::= extends qualName | in qualName [+ qualName]*
 SigExt:
     'extends' qualName=[NamedElement:ID] | 'in' qualName=[NamedElement:ID] ('+' qualNames+=[NamedElement:ID])*;
 
-// fieldDecl ::= [var] decl
 FieldDecl:
     'var'? decl=Decl;
 
-//decl ::= [disj] name,+ : [disj] expr
 Decl:
-    'disj'? name=ID (',' additionalNames+=ID)* ':' 'disj'? expr=Expr;
+    'disj'? name=QualDeclName (',' additionalNames+=QualDeclName)* ':' 'disj'? expr=Expr;
 
-//factDecl ::= fact [name] block
 FactDecl:
     'fact' name=ID? block=Block;
 
-// predDecl ::= pred [qualName .] name [paraDecls] block
 PredDecl:
     'pred' (qualName=[NamedElement:ID] '.')? name=ID paraDecls=ParaDecls? block=Block;
 
-// funDecl ::= fun [qualName .] name [paraDecls] : [mult] expr expr | fun [qualName .] name [paraDecls] : expr { expr }
 FunDecl:
     'fun' (qualName=[NamedElement:ID] '.')? name=ID paraDecls=ParaDecls? ':' 
     (mult=MULT? first=Expr second=Expr | retType=Expr '{' body=Expr '}');
 
-// paraDecls ::= ( decl,* ) | [ decl,* ]
 ParaDecls:
     '(' (decls+=Decl (',' decls+=Decl)*)? ')' | '[' (decls+=Decl (',' decls+=Decl)*)? ']';
 
-// assertDecl ::= assert [name] block
 AssertDecl:
     'assert' name=ID? block=Block;
 
-// enumDecl ::= [private] enum name { name,+ }
 EnumDecl:
     'private'? 'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
 
-// cmdDecl ::= [name :] ( run | check ) ( qualName | block ) [scope] [expect number] [=> cmdDecl]
 CmdDecl:
-    (name=ID ':')? (kind='run' | kind='check') (qualName=[NamedElement:ID] | block=Block) scope=Scope? 
+    (name=ID ':')? (kind='run' | kind='check') (qualName=[NamedElement:ID] | cmdName=ID block=Block | block=Block) scope=Scope? 
     ('expect' expectNum=INT)? ('=>' chainedCmd=CmdDecl)?;
 
-// scope ::= for number [but typescope,+] | for typescope,+ [expect number]
 Scope:
     'for' number=INT ('but' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*)? 
     | 'for' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*;
 
-// typescope ::= [exactly] number [.. [number [: number]]] qualName
 TypeScope:
-    'exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? qualName=[NamedElement:ID];
+    'exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? (qualName=[NamedElement:ID] | builtin=('int' | 'Int'));
 
 
-// Expression with precedence (from lowest to highest precedence)
 Expr:
     SequenceExpr;
 
 SequenceExpr infers Expr:
-    QuantExpr ({infer SequenceExpr.left=current} ';' right=QuantExpr)*;
-
-QuantExpr infers Expr:
-    ({infer QuantExpr} ('all' | 'no' | 'sum' | 'some' | 'lone' | 'one') decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
-    | DisjunctionExpr;
+    DisjunctionExpr ({infer SequenceExpr.left=current} ';' right=DisjunctionExpr)*;
 
 DisjunctionExpr infers Expr:
     BiImplicationExpr ({infer DisjunctionExpr.left=current} ('||' | 'or') right=BiImplicationExpr)*;
@@ -98,7 +80,11 @@ BiImplicationExpr infers Expr:
     ImplicationExpr ({infer BiImplicationExpr.left=current} ('<=>' | 'iff') right=ImplicationExpr)*;
 
 ImplicationExpr infers Expr:
-    BinaryTemporalExpr ({infer ImplicationExpr.left=current} ('=>' | 'implies') right=ImplicationExpr ('else' elseExpr=ImplicationExpr)?)?;
+    QuantExpr ({infer ImplicationExpr.left=current} ('=>' | 'implies') right=QuantExpr ('else' elseExpr=QuantExpr)?)?;
+
+QuantExpr infers Expr:
+    ({infer QuantExpr} QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
+    | BinaryTemporalExpr;
 
 BinaryTemporalExpr infers Expr:
     ConjunctionExpr ({infer BinaryTemporalExpr.left=current} ('until' | 'releases' | 'since' | 'triggered') right=ConjunctionExpr)*;
@@ -108,14 +94,14 @@ ConjunctionExpr infers Expr:
 
 UnaryLogicalExpr infers Expr:
     ({infer UnaryLogicalExpr} ('!' | 'not' | 'always' | 'eventually' | 'after' | 'before' | 'historically' | 'once') expr=UnaryLogicalExpr)
+    | UnaryMultExpr;
+
+UnaryMultExpr infers Expr:
+    ({infer UnaryMultExpr} ('no' | 'lone' | 'one' | 'some' | 'set') expr=UnaryMultExpr)
     | ComparisonExpr;
 
 ComparisonExpr infers Expr:
-    UnaryMultExpr ({infer ComparisonExpr.left=current} (negated=('!' | 'not'))? op=CompareOp right=UnaryMultExpr)?;
-
-UnaryMultExpr infers Expr:
-    ({infer UnaryMultExpr} ('no' | 'some' | 'lone' | 'one' | 'set') expr=UnaryMultExpr)
-    | UnionDiffExpr;
+    UnionDiffExpr ({infer ComparisonExpr.left=current} (negated=('!' | 'not'))? op=CompareOp right=UnionDiffExpr)?;
 
 UnionDiffExpr infers Expr:
     CardinalityExpr ({infer UnionDiffExpr.left=current} ('+' | '-') right=CardinalityExpr)*;
@@ -134,16 +120,15 @@ ArrowExpr infers Expr:
     RestrictionExpr ({infer ArrowExpr.left=current} arrows+=ArrowOp right=RestrictionExpr)*;
 
 RestrictionExpr infers Expr:
-    BoxJoinExpr ({infer RestrictionExpr.left=current} ('<:' | ':>') right=BoxJoinExpr)*;
-
-BoxJoinExpr infers Expr:
-    DotJoinExpr (
-        {infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']'
-        | {infer CallExpr.left=current} '[' args+=Expr (',' args+=Expr)* ']'  // function/predicate call
-    )*;
+    DotJoinExpr ({infer RestrictionExpr.left=current} ('<:' | ':>') right=DotJoinExpr)*;
 
 DotJoinExpr infers Expr:
-    PrimitiveExpr ({infer DotJoinExpr.left=current} ('.' | '.*' | '.^' | '.~') right=PrimitiveExpr)*;
+    BoxJoinExpr ({infer DotJoinExpr.left=current} ('.' | '.*' | '.^' | '.~') right=BoxJoinExpr)*;
+
+BoxJoinExpr infers Expr:
+    PrimitiveExpr (
+        {infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']'
+    )*;
 
 PrimitiveExpr infers Expr:
     PrimeExpr;
@@ -163,47 +148,44 @@ PrimaryExpr infers Expr:
     | ({infer ParenExpr} '(' expr=Expr ')')
     | Block
     | ({infer SetExpr} '{' decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar '}')
-    | ({infer SumExpr} 'sum' decls+=Decl (',' decls+=Decl)* '|' expr=Expr)  // sum expression
-    | ({infer LetExpr} 'let' decls+=LetDecl (',' decls+=LetDecl)* blockOrBar=BlockOrBar)  // let expression
-    | ({infer MetaExpr} qualName=QualName '$')  // meta value
-    | STRING  // string literal
+    | ({infer SumExpr} 'sum' decls+=Decl (',' decls+=Decl)* '|' expr=Expr)  
+    | ({infer LetExpr} 'let' decls+=LetDecl (',' decls+=LetDecl)* blockOrBar=BlockOrBar)  
+    | ({infer MetaExpr} qualName=QualName '$')  
+    | STRING  
     ;
 
 
-// qualName ::= [this/] ( name / )* name
 QualName:
     ('this/')? (names+=ID'/')* ID=[NamedElement:ID];
 
-// modulePath ::= [this/] ( name / )* name (for module declarations - no references needed)
+QualDeclName:
+    ('this/')? (names+=ID'/')* name=ID;
+
 ModulePath:
     ('this/')? (names+=ID'/')* name=ID;
 
-// const ::= [-] number | none | univ | iden
 Const:
-    '-'? number=(INT | HEX_INT | BIN_INT) | 'none' | 'univ' | 'iden';
+    '-'? number=(INT | HEX_INT | BIN_INT) | 'none' | 'univ' | 'iden' | 'Int' | 'String' | 'int';
 
-// ArrowOp ::= [mult | set] -> [mult | set]
 ArrowOp:
-    (leftMult=MULT | leftSet='set')? '->' (rightMult=MULT | rightSet='set')?;
+    (leftMult=('lone' | 'one') | leftSet='set')? '->' (rightMult=MULT | rightSet='set')?;
 
-// letDecl ::= name = expr
 LetDecl:
     name=ID '=' expr=Expr;
 
-//block ::= { expr* }
 Block:
-    '{' (exprs+=Expr (';' exprs+=Expr)*)? '}';
+    '{' statements+=BlockStatement* '}';
 
-// blockOrBar ::= block | bar expr
+BlockStatement:
+    expr=Expr ';'?;
+
 BlockOrBar:
     block=Block | '|' expr=Expr;
 
-// Comparison operators including negated forms  
 CompareOp returns string:
     'in' | '=' | '<' | '>' | '=<' | '>=';
 
-// quant ::= all | no | sum 
-QUANT returns string: 'all' | 'no' | 'sum';
+QUANT returns string: 'all' | 'no' | 'sum' | 'some' | 'lone' | 'one';
 
 MULT returns string: 'lone' | 'some' | 'one';
 
@@ -216,5 +198,6 @@ terminal BIN_INT: /0b[01]+/;
 terminal STRING: /"([^"\\]|\\.)*"/;
 
 hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
-hidden terminal SL_COMMENT: /(?:\/\/|--)[^\n\r]*/;
+hidden terminal SL_COMMENT_SLASH: /\/\/[^\n\r]*/;
+hidden terminal SL_COMMENT_DASH: /--[^\n\r]*/;
 
