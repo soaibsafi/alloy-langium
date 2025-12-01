@@ -44,7 +44,7 @@ PredDecl:
 
 FunDecl:
     'fun' (qualifier=QualName '.')? name=ID paraDecls=ParaDecls? ':' 
-    (mult=MULT? first=Expr second=Expr | retType=Expr '{' body=Expr '}');
+    (mult=MULT | multSet='set')? retType=ReturnTypeExpr '{' body=Expr '}';
 
 ParaDecls:
     '(' (decls+=Decl (',' decls+=Decl)*)? ')' | '[' (decls+=Decl (',' decls+=Decl)*)? ']';
@@ -69,6 +69,11 @@ TypeScope:
 
 Expr:
     SequenceExpr;
+
+// Return type expression - used in FunDecl to avoid ambiguity with multiplicity keywords
+// This skips UnaryMultExpr since mult keywords (lone, some, one, set) are handled separately
+ReturnTypeExpr infers Expr:
+    ComparisonExpr;
 
 SequenceExpr infers Expr:
     DisjunctionExpr ({infer SequenceExpr.left=current} ';' right=DisjunctionExpr)*;
