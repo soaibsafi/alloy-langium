@@ -1,9 +1,3 @@
-  
-
-[alloy](/)
-
-[about](/about.html) [uses](/applications.html) [book](/book.html) [community](/community.html) [docs](/documentation.html) [download](/download.html) [models](/models.html)
-
 Lexical Issues
 ==============
 
