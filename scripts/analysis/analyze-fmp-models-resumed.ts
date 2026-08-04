@@ -1,6 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { EmptyFileSystem } from 'langium';
-import { createAlloyServices } from '../src/index.js';
+import { createAlloyServices } from 'alloy-language';
 import { parseDocument } from 'langium/test';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -28,156 +27,151 @@ interface ModelAnalysisResult {
     parseErrorConsistency: boolean;
 }
 
-describe('FMP Dataset Models Analysis Tests', () => {
-    let services: any;
-    let csvData: Map<string, { parseErrors: number; status: string }> = new Map();
-    const analysisResults: ModelAnalysisResult[] = [];
-    const csvOutputPath = './test-results/fmp-dataset-analysis.csv';
+async function main() {
+    console.log('🚀 Starting FMP Dataset Analysis (with timeout protection)...');
     
-    beforeAll(async () => {
-        console.log('🔄 Initializing Alloy Language Services...');
-        services = createAlloyServices(EmptyFileSystem);
-        
-        // Load existing CSV data for consistency checking
-        csvData = loadExistingCSVData('./resources/fmp_model_analysis.csv');
-        console.log(`📊 Loaded ${csvData.size} entries from existing CSV for consistency checking`);
-        
-        // Ensure output directory exists
-        const outputDir = path.dirname(csvOutputPath);
-        if (!fs.existsSync(outputDir)) {
-            fs.mkdirSync(outputDir, { recursive: true });
-        }
-        
-        // Initialize CSV file with headers
-        await initializeCSVFile(csvOutputPath);
-    });
-
-    afterAll(async () => {
-        console.log(`📊 Analysis complete! Results written to: ${csvOutputPath}`);
-        console.log(`📁 Analyzed ${analysisResults.length} models total`);
-        
-        // Print summary statistics
-        printSummaryStatistics(analysisResults);
-    });
-
+    // Initialize Alloy Language Services
+    console.log('🔄 Initializing Alloy Language Services...');
+    const services = createAlloyServices(EmptyFileSystem);
+    
+    // Load existing CSV data for consistency checking
+    const csvData = loadExistingCSVData('./resources/fmp_model_analysis.csv');
+    console.log(`📊 Loaded ${csvData.size} entries from existing CSV for consistency checking`);
+    
+    // Setup output
+    const csvOutputPath = './test-results/fmp-dataset-analysis-resumed.csv';
+    const outputDir = path.dirname(csvOutputPath);
+    if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+    }
+    
+    // Initialize CSV file with headers
+    await initializeCSVFile(csvOutputPath);
+    
     // Discover all .als files in the fmp directory
     const fmpModelsPath = './resources/fmp';
     console.log(`🔍 Looking for models in: ${fmpModelsPath}`);
     const modelFiles = discoverAlloyFiles(fmpModelsPath);
     console.log(`📁 Found ${modelFiles.length} model files`);
+    
+    // Track summary statistics without keeping all results in memory
+    const summaryStats = {
+        totalProcessed: 0,
+        successfulParses: 0,
+        parseErrors: 0,
+        timeouts: 0,
+        consistentModels: 0,
+        totalParseTime: 0,
+        totalValidationTime: 0,
+        totalComplexity: 0,
+        totalFileSize: 0,
+        fastest: null as ModelAnalysisResult | null,
+        slowest: null as ModelAnalysisResult | null,
+        mostComplex: null as ModelAnalysisResult | null,
+        largest: null as ModelAnalysisResult | null,
+    };
+    
+    // Start from model 699 (where it got stuck)
+    const startFromIndex = 698; // 0-based index for model 699
+    console.log(`🔄 Starting from model ${startFromIndex + 1}: ${modelFiles[startFromIndex]?.relativePath}`);
+    
+    // Process models one by one
+    for (let i = startFromIndex; i < modelFiles.length; i++) {
+        const modelFile = modelFiles[i];
+        console.log(`\n📝 Processing ${i + 1}/${modelFiles.length}: ${modelFile.relativePath}`);
+        
+        try {
+            // Use timeout wrapper to prevent hanging
+            const result = await analyzeModelWithTimeout(services, modelFile, csvData, 30000); // 30 second timeout
+            
+            // Write result immediately to CSV
+            await appendResultToCSV(result, csvOutputPath);
+            
+            // Update summary statistics
+            updateSummaryStats(summaryStats, result);
+            
+            // Log progress
+            console.log(`   ✅ ${result.fileSize} bytes, ${result.parseTime.toFixed(2)}ms parse, ${result.validationTime.toFixed(2)}ms validation, success: ${result.parseSuccessful}, consistent: ${result.parseErrorConsistency}`);
+            
+        } catch (error) {
+            const isTimeout = error.message.includes('timeout');
+            if (isTimeout) {
+                summaryStats.timeouts++;
+                console.error(`   ⏰ TIMEOUT processing ${modelFile.relativePath} after 30s`);
+            } else {
+                console.error(`   ❌ Error processing ${modelFile.relativePath}: ${error.message}`);
+            }
+            
+            // Create a failure result for timeout/error cases
+            const errorResult: ModelAnalysisResult = {
+                filePath: modelFile.relativePath,
+                fileSize: 0,
+                characterCount: 0,
+                lineCount: 0,
+                parseTime: 0,
+                validationTime: 0,
+                totalTime: 0,
+                parseErrors: isTimeout ? -2 : -1, // Use -2 for timeout, -1 for other errors
+                validationDiagnostics: -1,
+                astNodes: 0,
+                memoryUsage: 0,
+                signatures: 0,
+                predicates: 0,
+                functions: 0,
+                facts: 0,
+                assertions: 0,
+                commands: 0,
+                parseSuccessful: false,
+                complexityScore: 0,
+                parseErrorConsistency: checkParseErrorConsistency(modelFile.relativePath, false, csvData)
+            };
+            
+            // Write error result to CSV
+            await appendResultToCSV(errorResult, csvOutputPath);
+            updateSummaryStats(summaryStats, errorResult);
+        }
+        
+        // Force garbage collection if available
+        if (global.gc && (i + 1) % 10 === 0) {
+            global.gc();
+        }
+        
+        // Add a small delay to prevent overwhelming the system
+        if ((i + 1) % 100 === 0) {
+            console.log(`   🔄 Processed ${i + 1} models, taking a brief pause...`);
+            console.log(`   📊 Current stats: ${summaryStats.successfulParses} success, ${summaryStats.parseErrors} errors, ${summaryStats.timeouts} timeouts`);
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+    }
+    
+    console.log('\n🎉 Analysis complete!');
+    console.log(`📊 Results written to: ${csvOutputPath}`);
+    
+    // Print final summary
+    printFinalSummary(summaryStats);
+}
 
-    describe('Individual Model Analysis', () => {
-        if (modelFiles.length === 0) {
-            it('should skip analysis when no FMP models are present in ./resources/fmp', () => {
-                expect(modelFiles.length).toBe(0);
-            });
-        } else {
-            modelFiles.forEach((modelFile) => {
-                it(`should analyze ${modelFile.relativePath}`, async () => {
-                const result = await analyzeModel(services, modelFile, csvData);
-                analysisResults.push(result);
-                
-                // Write result immediately to CSV to avoid memory buildup
-                await appendResultToCSV(result, csvOutputPath);
-                
-                // Log basic info for each model
-                console.log(`📝 ${result.filePath}: ${result.fileSize} bytes, ${result.parseTime.toFixed(2)}ms parse, ${result.validationTime.toFixed(2)}ms validation`);
-                
-                // Clear some memory by removing the result from array after writing
-                // Keep only basic stats for summary
-                if (analysisResults.length > 100) {
-                    analysisResults.splice(0, 50); // Remove oldest 50 results to free memory
-                }
-                
-                // Force garbage collection if available (helps with memory pressure)
-                if (global.gc) {
-                    global.gc();
-                }
-                
-                // Tests should not fail for individual models, just collect data
-                expect(result.filePath).toBeTruthy();
-                expect(result.parseTime).toBeGreaterThanOrEqual(0); // Allow 0ms for error cases
-            });
-        });
+async function analyzeModelWithTimeout(
+    services: any, 
+    modelFile: {filename: string, fullPath: string, relativePath: string, directory: string}, 
+    csvData: Map<string, { parseErrors: number; status: string }>,
+    timeoutMs: number = 30000 // 30 second timeout
+): Promise<ModelAnalysisResult> {
+    return new Promise(async (resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+            reject(new Error(`Analysis timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        try {
+            const result = await analyzeModel(services, modelFile, csvData);
+            clearTimeout(timeoutId);
+            resolve(result);
+        } catch (error) {
+            clearTimeout(timeoutId);
+            reject(error);
         }
     });
-
-    describe('Aggregate Analysis', () => {
-        it('should have reasonable average performance across all models', () => {
-            if (analysisResults.length === 0) return;
-            
-            const avgParseTime = analysisResults.reduce((sum, r) => sum + r.parseTime, 0) / analysisResults.length;
-            const avgValidationTime = analysisResults.reduce((sum, r) => sum + r.validationTime, 0) / analysisResults.length;
-            const successRate = analysisResults.filter(r => r.parseSuccessful).length / analysisResults.length;
-            
-            console.log(`📊 Average parse time: ${avgParseTime.toFixed(2)}ms`);
-            console.log(`📊 Average validation time: ${avgValidationTime.toFixed(2)}ms`);
-            console.log(`📊 Parse success rate: ${(successRate * 100).toFixed(1)}%`);
-            
-            // Reasonable performance expectations
-            expect(avgParseTime).toBeGreaterThanOrEqual(0); // Allow any average
-            expect(avgValidationTime).toBeGreaterThanOrEqual(0); // Allow any average
-            // expect(successRate).toBeGreaterThan(0.5); // Comment out for now due to parsing issues
-        });
-
-        it('should identify the most complex models', () => {
-            if (analysisResults.length === 0) return;
-            
-            // Sort by complexity score (descending)
-            const sortedByComplexity = [...analysisResults].sort((a, b) => b.complexityScore - a.complexityScore);
-            const top5 = sortedByComplexity.slice(0, 5);
-            
-            console.log('🏆 Top 5 Most Complex Models:');
-            top5.forEach((result, index) => {
-                console.log(`   ${index + 1}. ${result.filePath} (complexity: ${result.complexityScore.toFixed(2)})`);
-            });
-            
-            expect(top5.length).toBeLessThanOrEqual(5);
-        });
-
-        it('should identify models with the most parse errors', () => {
-            if (analysisResults.length === 0) return;
-            
-            const modelsWithErrors = analysisResults.filter(r => r.parseErrors > 0);
-            const sortedByErrors = modelsWithErrors.sort((a, b) => b.parseErrors - a.parseErrors);
-            
-            console.log(`⚠️  Models with parse errors: ${modelsWithErrors.length}/${analysisResults.length}`);
-            if (sortedByErrors.length > 0) {
-                console.log('📋 Top models with most parse errors:');
-                sortedByErrors.slice(0, 5).forEach((result, index) => {
-                    console.log(`   ${index + 1}. ${result.filePath} (${result.parseErrors} errors)`);
-                });
-            }
-            
-            // This is informational, not a failure condition
-            expect(modelsWithErrors.length).toBeGreaterThanOrEqual(0);
-        });
-
-        it('should check parse error consistency with existing CSV data', () => {
-            if (analysisResults.length === 0) return;
-            
-            const inconsistentModels = analysisResults.filter(r => !r.parseErrorConsistency);
-            const consistencyRate = (analysisResults.length - inconsistentModels.length) / analysisResults.length;
-            
-            console.log(`🔍 Parse error consistency rate: ${(consistencyRate * 100).toFixed(1)}%`);
-            console.log(`📊 Consistent models: ${analysisResults.length - inconsistentModels.length}/${analysisResults.length}`);
-            
-            if (inconsistentModels.length > 0) {
-                console.log(`⚠️  Inconsistent models found: ${inconsistentModels.length}`);
-                console.log('📋 Models with parse error inconsistencies:');
-                inconsistentModels.slice(0, 10).forEach((result, index) => {
-                    console.log(`   ${index + 1}. ${result.filePath} (parseSuccessful: ${result.parseSuccessful})`);
-                });
-                if (inconsistentModels.length > 10) {
-                    console.log(`   ... and ${inconsistentModels.length - 10} more`);
-                }
-            }
-            
-            // This is informational, not a failure condition
-            expect(inconsistentModels.length).toBeGreaterThanOrEqual(0);
-        });
-    });
-});
+}
 
 function discoverAlloyFiles(basePath: string): Array<{filename: string, fullPath: string, relativePath: string, directory: string}> {
     const files: Array<{filename: string, fullPath: string, relativePath: string, directory: string}> = [];
@@ -258,7 +252,11 @@ function checkParseErrorConsistency(
     return csvHasParseError === currentHasParseError;
 }
 
-async function analyzeModel(services: any, modelFile: {filename: string, fullPath: string, relativePath: string, directory: string}, csvData: Map<string, { parseErrors: number; status: string }>): Promise<ModelAnalysisResult> {
+async function analyzeModel(
+    services: any, 
+    modelFile: {filename: string, fullPath: string, relativePath: string, directory: string}, 
+    csvData: Map<string, { parseErrors: number; status: string }>
+): Promise<ModelAnalysisResult> {
     const startTime = performance.now();
     
     try {
@@ -556,39 +554,81 @@ async function appendResultToCSV(result: ModelAnalysisResult, csvPath: string): 
     fs.appendFileSync(csvPath, csvLine, 'utf-8');
 }
 
-function printSummaryStatistics(results: ModelAnalysisResult[]): void {
-    if (results.length === 0) {
-        console.log('📊 No results to summarize');
+function updateSummaryStats(stats: any, result: ModelAnalysisResult): void {
+    stats.totalProcessed++;
+    
+    if (result.parseSuccessful) {
+        stats.successfulParses++;
+    } else {
+        stats.parseErrors++;
+    }
+    
+    if (result.parseErrorConsistency) {
+        stats.consistentModels++;
+    }
+    
+    stats.totalParseTime += result.parseTime;
+    stats.totalValidationTime += result.validationTime;
+    stats.totalComplexity += result.complexityScore;
+    stats.totalFileSize += result.fileSize;
+    
+    // Track extremes
+    if (!stats.fastest || result.parseTime < stats.fastest.parseTime) {
+        stats.fastest = result;
+    }
+    
+    if (!stats.slowest || result.parseTime > stats.slowest.parseTime) {
+        stats.slowest = result;
+    }
+    
+    if (!stats.mostComplex || result.complexityScore > stats.mostComplex.complexityScore) {
+        stats.mostComplex = result;
+    }
+    
+    if (!stats.largest || result.fileSize > stats.largest.fileSize) {
+        stats.largest = result;
+    }
+}
+
+function printFinalSummary(stats: any): void {
+    if (stats.totalProcessed === 0) {
+        console.log('📊 No models were processed');
         return;
     }
     
-    const successful = results.filter(r => r.parseSuccessful);
-    const withErrors = results.filter(r => r.parseErrors > 0);
-    const consistent = results.filter(r => r.parseErrorConsistency);
+    const avgParseTime = stats.totalParseTime / stats.totalProcessed;
+    const avgValidationTime = stats.totalValidationTime / stats.totalProcessed;
+    const avgComplexity = stats.totalComplexity / stats.totalProcessed;
+    const successRate = (stats.successfulParses / stats.totalProcessed) * 100;
+    const consistencyRate = (stats.consistentModels / stats.totalProcessed) * 100;
     
-    const avgParseTime = results.reduce((sum, r) => sum + r.parseTime, 0) / results.length;
-    const avgValidationTime = results.reduce((sum, r) => sum + r.validationTime, 0) / results.length;
-    const avgComplexity = results.reduce((sum, r) => sum + r.complexityScore, 0) / results.length;
-    const totalFileSize = results.reduce((sum, r) => sum + r.fileSize, 0);
-    
-    console.log('\n📊 === SUMMARY STATISTICS ===');
-    console.log(`📁 Total models analyzed: ${results.length}`);
-    console.log(`✅ Successfully parsed: ${successful.length} (${(successful.length/results.length*100).toFixed(1)}%)`);
-    console.log(`❌ Parse errors: ${withErrors.length} (${(withErrors.length/results.length*100).toFixed(1)}%)`);
-    console.log(`🔍 Parse error consistency: ${consistent.length}/${results.length} (${(consistent.length/results.length*100).toFixed(1)}%)`);
+    console.log('\n📊 === FINAL ANALYSIS SUMMARY ===');
+    console.log(`📁 Total models processed: ${stats.totalProcessed}`);
+    console.log(`✅ Successfully parsed: ${stats.successfulParses} (${successRate.toFixed(1)}%)`);
+    console.log(`❌ Parse errors: ${stats.parseErrors} (${((stats.parseErrors / stats.totalProcessed) * 100).toFixed(1)}%)`);
+    console.log(`⏰ Timeouts: ${stats.timeouts} (${((stats.timeouts / stats.totalProcessed) * 100).toFixed(1)}%)`);
+    console.log(`🔍 Parse error consistency: ${stats.consistentModels}/${stats.totalProcessed} (${consistencyRate.toFixed(1)}%)`);
     console.log(`⚡ Average parse time: ${avgParseTime.toFixed(2)}ms`);
     console.log(`🔍 Average validation time: ${avgValidationTime.toFixed(2)}ms`);
     console.log(`🧮 Average complexity score: ${avgComplexity.toFixed(2)}`);
-    console.log(`📦 Total file size: ${(totalFileSize / 1024).toFixed(2)} KB`);
+    console.log(`📦 Total file size: ${(stats.totalFileSize / 1024).toFixed(2)} KB`);
     
-    // Find extremes
-    const fastest = results.reduce((min, r) => r.parseTime < min.parseTime ? r : min);
-    const slowest = results.reduce((max, r) => r.parseTime > max.parseTime ? r : max);
-    const mostComplex = results.reduce((max, r) => r.complexityScore > max.complexityScore ? r : max);
-    const largest = results.reduce((max, r) => r.fileSize > max.fileSize ? r : max);
-    
-    console.log(`\n🏃 Fastest parse: ${fastest.filePath} (${fastest.parseTime.toFixed(2)}ms)`);
-    console.log(`🐌 Slowest parse: ${slowest.filePath} (${slowest.parseTime.toFixed(2)}ms)`);
-    console.log(`🧠 Most complex: ${mostComplex.filePath} (${mostComplex.complexityScore.toFixed(2)})`);
-    console.log(`📏 Largest file: ${largest.filePath} (${largest.fileSize} bytes)`);
+    if (stats.fastest) {
+        console.log(`\n🏃 Fastest parse: ${stats.fastest.filePath} (${stats.fastest.parseTime.toFixed(2)}ms)`);
+    }
+    if (stats.slowest) {
+        console.log(`🐌 Slowest parse: ${stats.slowest.filePath} (${stats.slowest.parseTime.toFixed(2)}ms)`);
+    }
+    if (stats.mostComplex) {
+        console.log(`🧠 Most complex: ${stats.mostComplex.filePath} (${stats.mostComplex.complexityScore.toFixed(2)})`);
+    }
+    if (stats.largest) {
+        console.log(`📏 Largest file: ${stats.largest.filePath} (${stats.largest.fileSize} bytes)`);
+    }
 }
+
+// Error handling for the main function
+main().catch(error => {
+    console.error('💥 Fatal error:', error);
+    process.exit(1);
+});

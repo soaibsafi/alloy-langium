@@ -1,5 +1,5 @@
 import { EmptyFileSystem } from 'langium';
-import { createAlloyServices } from './src/index.js';
+import { createAlloyServices } from 'alloy-language';
 import { parseDocument } from 'langium/test';
 import * as fs from 'fs';
 import * as path from 'path';

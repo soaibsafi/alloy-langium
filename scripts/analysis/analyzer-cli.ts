@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { extractDocuments, findAlloyFiles } from './util.js';
+import { extractDocuments, findAlloyFiles } from '../../packages/cli/src/util.js';
 
 export interface ModelMetrics {
     filePath: string;

@@ -2,7 +2,7 @@ import type { AlloyModule } from 'alloy-language';
 import { expandToNode, toString } from 'langium/generate';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { extractDestinationAndName } from './util.js';
+import { extractDestinationAndName } from '../../packages/cli/src/util.js';
 import { analyzeASTStructure, calculateComplexityScore } from './analyzer-cli.js';
 
 export function generateOutput(model: AlloyModule, filePath: string, destination: string | undefined, format: string = 'js'): string {

@@ -1,6 +1,5 @@
 export * from './alloy-module.js';
 export * from './alloy-validator.js';
-export * from './alloy-ast-processor.js';
 export * from './alloy-completion-provider.js';
 export * from './alloy-scope-provider.js';
 export * from './alloy-workspace-manager.js';

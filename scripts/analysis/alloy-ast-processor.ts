@@ -1,5 +1,5 @@
 import { AstNode, isAstNode } from 'langium';
-import { SigDecl } from './generated/ast.js';
+import { SigDecl } from 'alloy-language';
 
 /**
  * Custom service to handle multi-name signature declarations.
