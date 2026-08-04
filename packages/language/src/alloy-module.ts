@@ -5,6 +5,7 @@ import { AlloyValidator, registerValidationChecks } from './alloy-validator.js';
 import { AlloyCompletionProvider } from './alloy-completion-provider.js';
 import { AlloyScopeProvider } from './alloy-scope-provider.js';
 import { AlloyWorkspaceManager } from './alloy-workspace-manager.js';
+import { AlloyScopeComputation } from './alloy-scope-computation.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -31,7 +32,8 @@ export const AlloyLanguageModule: Module<AlloyServices, PartialLangiumServices &
         AlloyValidator: () => new AlloyValidator()
     },
     references: {
-        ScopeProvider: (services) => new AlloyScopeProvider(services)
+        ScopeProvider: (services) => new AlloyScopeProvider(services),
+        ScopeComputation: (services) => new AlloyScopeComputation(services)
     },
     lsp: {
         CompletionProvider: (services) => new AlloyCompletionProvider(services)

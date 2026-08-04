@@ -8,6 +8,7 @@ const IMPORTABLE_TYPES = new Set<string>([
     'EnumDecl',
     'FactDecl',
     'FieldDecl',
+    'Decl',
     'FunDecl',
     'MacroDecl',
     'PredDecl',
