@@ -111,7 +111,9 @@ export function calculateComplexityScore(astAnalysis: any, fileContent: string, 
 }
 
 export async function analyzeAction(paths: string[], options: { format?: string; output?: string }): Promise<void> {
-    const services = createAlloyServices(NodeFileSystem).Alloy;
+    const alloyServices = createAlloyServices(NodeFileSystem);
+    await alloyServices.shared.workspace.WorkspaceManager.initializeWorkspace([]);
+    const services = alloyServices.Alloy;
 
     let allFiles: string[] = [];
     for (const p of paths) {
@@ -206,3 +208,15 @@ export async function analyzeAction(paths: string[], options: { format?: string;
         console.log(chalk.green(`\n✔ Results saved to ${options.output}`));
     }
 }
+
+// Automatically run analyzeAction when called directly from CLI
+if (process.argv[1]?.includes('analyzer-cli')) {
+    const args = process.argv.slice(2);
+    if (args.length > 0) {
+        analyzeAction(args, {}).catch(err => {
+            console.error(err);
+            process.exit(1);
+        });
+    }
+}
+
