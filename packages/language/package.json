@@ -30,7 +30,7 @@
         "clean": "shx rm -fr *.tsbuildinfo out",
         "build": "echo 'No build step'",
         "build:clean": "npm run clean && npm run build",
-        "langium:generate": "langium generate",
+        "langium:generate": "langium generate && node patch-grammar.js",
         "langium:watch": "langium generate --watch",
         "test": "vitest run"
     },
