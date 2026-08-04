@@ -1,7 +1,9 @@
 import { type Module, inject } from 'langium';
 import { createDefaultModule, createDefaultSharedModule, type DefaultSharedModuleContext, type LangiumServices, type LangiumSharedServices, type PartialLangiumServices, type PartialLangiumSharedServices } from 'langium/lsp';
 import { AlloyGeneratedModule, AlloyGeneratedSharedModule } from './generated/module.js';
-import { AlloyValidator, registerValidationChecks } from './alloy-validator.js';
+import { AlloyUsageValidator } from './validation/alloy-usage-validator.js';
+import { AlloyNameValidator } from './validation/alloy-name-validator.js';
+import { registerValidationChecks } from './alloy-validator.js';
 import { AlloyCompletionProvider } from './alloy-completion-provider.js';
 import { AlloyScopeProvider } from './alloy-scope-provider.js';
 import { AlloyWorkspaceManager } from './alloy-workspace-manager.js';
@@ -12,7 +14,8 @@ import { AlloyScopeComputation } from './alloy-scope-computation.js';
  */
 export type AlloyAddedServices = {
     validation: {
-        AlloyValidator: AlloyValidator
+        AlloyUsageValidator: AlloyUsageValidator,
+        AlloyNameValidator: AlloyNameValidator
     }
 }
 
@@ -29,7 +32,8 @@ export type AlloyServices = LangiumServices & AlloyAddedServices
  */
 export const AlloyLanguageModule: Module<AlloyServices, PartialLangiumServices & AlloyAddedServices> = {
     validation: {
-        AlloyValidator: () => new AlloyValidator()
+        AlloyUsageValidator: (services) => new AlloyUsageValidator(services),
+        AlloyNameValidator: (services) => new AlloyNameValidator(services)
     },
     references: {
         ScopeProvider: (services) => new AlloyScopeProvider(services),
