@@ -1,39 +1,94 @@
+/**
+ * @file structural-analyzer-cli.ts
+ * @description Structural Complexity & Syntactic Metric Analyzer for Alloy Specifications.
+ * 
+ * Computes deep formal structural metrics for research publications:
+ * - AST Tree Depths (maximum depth, average expression depth).
+ * - Quantifier Nesting Depths & Quantified Variable counts.
+ * - Temporal Operator Nesting & Implication Nesting (`=>`, `<=>`).
+ * - Relational Join Chain Lengths (`a.b.c.d`) & Transitive Closures (`^`, `*`).
+ * - Overloaded Identifier names across namespaces.
+ * - Ratios: Declaration to Constraint Ratio, Formula to Signature Ratio, Average References per Declaration.
+ * - Specification Cyclomatic Complexity (branching & logical operator density).
+ * 
+ * Features:
+ * - Direct execution via CLI (`npx tsx scripts/analysis/structural-analyzer-cli.ts <path>`).
+ * - `--include-imported` flag to toggle inclusion of imported standard module elements.
+ * - Format output in Table, JSON, or CSV.
+ */
+
 import type { AlloyModule } from 'alloy-language';
 import { createAlloyServices } from 'alloy-language';
 import { NodeFileSystem } from 'langium/node';
-import { URI } from 'langium';
+import { URI, isAstNode, AstUtils, type Reference } from 'langium';
 import chalk from 'chalk';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { extractDocuments, findAlloyFiles } from '../../packages/cli/src/util.js';
-import { isAstNode } from 'langium';
+import { findAlloyFiles } from '../../packages/cli/src/util.js';
 
+/**
+ * Interface representing structural complexity and syntactic distribution metrics.
+ */
 export interface StructuralMetrics {
+    /** File path of the analyzed specification */
     filePath: string;
+    /** File size in bytes */
     fileSize: number;
+    /** Source file line count */
     lineCount: number;
+    /** Maximum AST tree depth from module root to any leaf node */
     maxAstDepth: number;
+    /** Average expression subtree depth */
     avgExprDepth: number;
+    /** Maximum nesting depth of quantifiers */
     maxQuantifierNesting: number;
+    /** Total number of local variables bound by quantifiers */
     quantifiedVarCount: number;
+    /** Maximum nesting depth of temporal operators */
     maxTemporalNesting: number;
+    /** Maximum nesting depth of implications (`=>`, `implies`, `<=>`, `iff`) */
     maxImplicationNesting: number;
+    /** Maximum length of relational join chains (e.g. `a.b.c.d`) */
     maxJoinChainLength: number;
+    /** Average length of relational join chains */
     avgJoinChainLength: number;
+    /** Number of transitive closure operations (`^`, `*`) */
     transitiveClosureCount: number;
+    /** Count of identifier names shared across multiple declaration kinds */
     overloadedNameCount: number;
+    /** Ratio of total declarations to constraints (facts, predicates, functions, assertions) */
     declToConstraintRatio: number;
+    /** Average number of cross-references per declared element */
     avgRefsPerDecl: number;
+    /** Cyclomatic complexity measure based on logical operators and branching */
     cyclomaticComplexity: number;
+    /** Ratio of expression nodes to signature declarations */
     formulaToSigRatio: number;
+    /** True if the specification parsed without syntax errors */
     parseSuccessful: boolean;
+    /** Total count of syntax parser errors + semantic validation errors */
     errorCount: number;
 }
 
+/** Set of recognized temporal operator keywords in Electrum / Alloy 6 */
 const TEMPORAL_KEYWORDS = new Set(['always', 'eventually', 'after', 'before', 'historically', 'once', 'until', 'releases', 'since', 'triggered']);
 
-export function analyzeStructuralComplexity(ast: AlloyModule, document: any): Omit<StructuralMetrics, 'filePath' | 'fileSize' | 'lineCount' | 'parseSuccessful' | 'errorCount'> {
+/**
+ * Analyzes AST depths, quantifier nesting, relational join chains, and cyclomatic complexity for an Alloy AST.
+ * 
+ * @param ast Root AlloyModule AST node
+ * @param document Parsed Langium Document object
+ * @param options Configuration options (`includeImported`: default false)
+ * @returns Computed structural metrics
+ */
+export function analyzeStructuralComplexity(
+    ast: AlloyModule,
+    document: any,
+    options: { includeImported?: boolean } = {}
+): Omit<StructuralMetrics, 'filePath' | 'fileSize' | 'lineCount' | 'parseSuccessful' | 'errorCount'> {
+    const { includeImported = false } = options;
+
     let maxAstDepth = 0;
     let exprCount = 0;
     let totalExprDepthSum = 0;
@@ -61,7 +116,6 @@ export function analyzeStructuralComplexity(ast: AlloyModule, document: any): Om
         nameToTypes.get(name)!.add(kind);
     }
 
-    // Traverse AST to collect top-level counts and declarations
     if (ast && ast.paragraph) {
         for (const p of ast.paragraph) {
             switch (p.$type) {
@@ -142,7 +196,6 @@ export function analyzeStructuralComplexity(ast: AlloyModule, document: any): Om
 
         const type = node.$type;
 
-        // Quantifier nesting & variables
         if (type === 'QuantExpr' || type === 'SetExpr') {
             currentQuantDepth++;
             if (currentQuantDepth > maxQuantifierNesting) {
@@ -156,7 +209,6 @@ export function analyzeStructuralComplexity(ast: AlloyModule, document: any): Om
             }
         }
 
-        // Temporal operator nesting
         let isTemporal = false;
         if (type === 'BinaryTemporalExpr') {
             isTemporal = true;
@@ -170,7 +222,6 @@ export function analyzeStructuralComplexity(ast: AlloyModule, document: any): Om
             }
         }
 
-        // Implication nesting
         if (type === 'ImplicationExpr' || type === 'BiImplicationExpr') {
             currentImplDepth++;
             if (currentImplDepth > maxImplicationNesting) {
@@ -178,12 +229,10 @@ export function analyzeStructuralComplexity(ast: AlloyModule, document: any): Om
             }
         }
 
-        // Transitive closures
         if (type === 'UnaryExpr' && (node.op === '^' || node.op === '*')) {
             transitiveClosureCount++;
         }
 
-        // Relational join chains (DotJoinExpr)
         if (type === 'DotJoinExpr') {
             let joinLength = 1;
             let curr = node;
@@ -201,12 +250,10 @@ export function analyzeStructuralComplexity(ast: AlloyModule, document: any): Om
             joinChainCount++;
         }
 
-        // Cyclomatic Complexity (branching logic)
         if (['DisjunctionExpr', 'ConjunctionExpr', 'BiImplicationExpr', 'ImplicationExpr', 'UnaryLogicalExpr'].includes(type)) {
             cyclomaticComplexity++;
         }
 
-        // Expression depth measurement
         let maxChildDepth = depth;
         for (const key in node) {
             if (Object.prototype.hasOwnProperty.call(node, key) && key !== '$type' && key !== '$container' && key !== '$document') {
@@ -242,25 +289,26 @@ export function analyzeStructuralComplexity(ast: AlloyModule, document: any): Om
     const avgJoinChainLength = joinChainCount > 0 ? Math.round((totalJoinChainLengthSum / joinChainCount) * 100) / 100 : 0;
     const declToConstraintRatio = constraintCount > 0 ? Math.round((declarationCount / constraintCount) * 100) / 100 : declarationCount;
 
-    // Count cross references per declaration
+    // Count references respecting includeImported flag
     let referenceCount = 0;
-    if (document && document.references) {
-        referenceCount = document.references.length;
-    } else if (ast) {
-        // Fallback reference count via AST traversal
-        function countRefs(node: any, visited = new Set()) {
-            if (!node || typeof node !== 'object' || visited.has(node)) return;
-            visited.add(node);
-            if (node.ref || node.$refText) referenceCount++;
-            for (const k in node) {
-                if (Object.prototype.hasOwnProperty.call(node, k) && k !== '$container' && k !== '$type') {
-                    const val = node[k];
-                    if (Array.isArray(val)) val.forEach(v => countRefs(v, visited));
-                    else if (typeof val === 'object') countRefs(val, visited);
+    const currentDocUri = document.uri.toString();
+
+    if (ast) {
+        for (const node of AstUtils.streamAllContents(ast)) {
+            for (const refInfo of AstUtils.streamReferences(node)) {
+                const ref = refInfo.reference as Reference;
+                const target = ref?.ref;
+                if (target) {
+                    const targetDoc = AstUtils.getDocument(target);
+                    const targetDocUri = targetDoc?.uri?.toString();
+                    const isImported = Boolean(targetDocUri && targetDocUri !== currentDocUri);
+                    if (!includeImported && isImported) {
+                        continue;
+                    }
+                    referenceCount++;
                 }
             }
         }
-        countRefs(ast);
     }
 
     const avgRefsPerDecl = declarationCount > 0 ? Math.round((referenceCount / declarationCount) * 100) / 100 : 0;
@@ -284,7 +332,14 @@ export function analyzeStructuralComplexity(ast: AlloyModule, document: any): Om
     };
 }
 
-export async function analyzeStructuralAction(paths: string[], options: { format?: string; output?: string }): Promise<void> {
+/**
+ * Main action runner to analyze structural complexity for given file or directory paths.
+ * 
+ * @param paths Array of file or directory paths
+ * @param options Output format ('table', 'json', 'csv'), output file path, and includeImported flag
+ */
+export async function analyzeStructuralAction(paths: string[], options: { format?: string; output?: string; includeImported?: boolean } = {}): Promise<void> {
+    const { includeImported = false } = options;
     const alloyServices = createAlloyServices(NodeFileSystem);
     await alloyServices.shared.workspace.WorkspaceManager.initializeWorkspace([]);
     const services = alloyServices.Alloy;
@@ -340,21 +395,17 @@ export async function analyzeStructuralAction(paths: string[], options: { format
     }
 
     const results: StructuralMetrics[] = [];
-    let totalBuildTime = 0;
 
     for (const filePath of allFiles) {
         const fileContent = fs.readFileSync(filePath, 'utf-8');
         const lineCount = fileContent.split(/\r?\n/).length;
 
         const uri = URI.file(path.resolve(filePath));
-        const buildStart = performance.now();
         const document = await services.shared.workspace.LangiumDocuments.getOrCreateDocument(uri);
         await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
-        const buildTime = performance.now() - buildStart;
-        totalBuildTime += buildTime;
 
         const ast = document.parseResult?.value as AlloyModule;
-        const metrics = analyzeStructuralComplexity(ast, document);
+        const metrics = analyzeStructuralComplexity(ast, document, { includeImported });
 
         const parseErrors = document.parseResult?.parserErrors.length ?? 0;
         const validationErrors = (document.diagnostics ?? []).filter(d => d.severity === 1).length;
@@ -400,7 +451,7 @@ export async function analyzeStructuralAction(paths: string[], options: { format
         
         results.push(rowResult);
 
-        // Deep cleanup memory
+        // Memory cleanup
         services.shared.workspace.IndexManager.remove(uri);
         services.shared.workspace.LangiumDocuments.deleteDocument(uri);
     }
@@ -422,27 +473,27 @@ export async function analyzeStructuralAction(paths: string[], options: { format
         console.log(outputString);
         if (options.output) {
             fs.writeFileSync(options.output, outputString, 'utf-8');
-            console.log(chalk.green(`\n✔ Results saved to ${options.output}`));
         }
     }
 }
 
-// Direct CLI Invocation
+// Automatically run analyzeStructuralAction when called directly from CLI
 if (process.argv[1]?.includes('structural-analyzer-cli')) {
     const args = process.argv.slice(2);
     const formatIdx = args.indexOf('--format');
     const format = formatIdx !== -1 ? args[formatIdx + 1] : undefined;
     const outputIdx = args.indexOf('--output');
     const output = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
+    const includeImported = args.includes('--include-imported');
 
     const filePaths = args.filter((a, i) => !a.startsWith('--') && (i === 0 || !args[i - 1]?.startsWith('--')));
 
     if (filePaths.length > 0) {
-        analyzeStructuralAction(filePaths, { format, output }).catch(err => {
+        analyzeStructuralAction(filePaths, { format, output, includeImported }).catch(err => {
             console.error(err);
             process.exit(1);
         });
     } else {
-        console.log('Usage: npx tsx scripts/analysis/structural-analyzer-cli.ts <path-to-als-file-or-directory> [--format json|csv|table] [--output <filepath>]');
+        console.log('Usage: npx tsx scripts/analysis/structural-analyzer-cli.ts <path-to-als-file-or-directory> [--include-imported] [--format json|csv|table] [--output <filepath>]');
     }
 }

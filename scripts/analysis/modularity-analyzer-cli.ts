@@ -1,43 +1,97 @@
+/**
+ * @file modularity-analyzer-cli.ts
+ * @description Modularity, Coupling, Call Graph, and Centrality Analyzer for Alloy Specifications.
+ * 
+ * Computes software architecture & formal specification quality metrics:
+ * - Module imports and cross-module reference counts.
+ * - Call Graph Fan-In and Fan-Out for predicates and functions.
+ * - Declaration Dependency Graph Density.
+ * - Strongly Connected Components (SCCs) via Tarjan's algorithm to detect recursion cycles.
+ * - Unused declaration analysis.
+ * - Fact coupling (facts bound to multiple signatures/fields).
+ * - Signature and Predicate degree centrality.
+ * 
+ * Features:
+ * - Direct execution via CLI (`npx tsx scripts/analysis/modularity-analyzer-cli.ts <path>`).
+ * - `--include-imported` flag to toggle inclusion of imported standard module references.
+ * - Format output in Table, JSON, or CSV.
+ */
+
 import type { AlloyModule } from 'alloy-language';
 import { createAlloyServices } from 'alloy-language';
 import { NodeFileSystem } from 'langium/node';
-import { URI } from 'langium';
+import { URI, isAstNode, AstUtils } from 'langium';
 import chalk from 'chalk';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { extractDocuments, findAlloyFiles } from '../../packages/cli/src/util.js';
-import { isAstNode } from 'langium';
+import { findAlloyFiles } from '../../packages/cli/src/util.js';
 
+/**
+ * Interface representing modularity, coupling, call graph, and centrality metrics.
+ */
 export interface ModularityMetrics {
+    /** File path of the analyzed specification */
     filePath: string;
+    /** File size in bytes */
     fileSize: number;
+    /** Source file line count */
     lineCount: number;
+    /** Number of imported modules (`open ...`) */
     importedModuleCount: number;
+    /** Number of references pointing across module boundaries */
     crossModuleReferenceCount: number;
+    /** Maximum predicate/function call graph Fan-In (in-degree) */
     maxPredicateFanIn: number;
+    /** Average predicate/function call graph Fan-In */
     avgPredicateFanIn: number;
+    /** Maximum predicate/function call graph Fan-Out (out-degree) */
     maxPredicateFanOut: number;
+    /** Average predicate/function call graph Fan-Out */
     avgPredicateFanOut: number;
+    /** Declaration dependency graph density (E / [V * (V - 1)]) */
     declDependencyGraphDensity: number;
+    /** Number of non-trivial Strongly Connected Components (recursive/mutually-recursive cycles) */
     stronglyConnectedComponentsCount: number;
+    /** Maximum node count in any single SCC */
     maxSccSize: number;
+    /** Number of declared elements (sigs, fields, preds) with zero incoming references */
     unusedDeclarationCount: number;
+    /** Number of fact declarations referencing 3 or more distinct signatures/fields */
     highlyCoupledFactCount: number;
+    /** Maximum number of signatures/fields referenced by a single fact */
     maxFactCoupling: number;
+    /** Name of the signature with the highest degree centrality */
     topCentralSignature: string;
+    /** Name of the predicate/function with the highest degree centrality */
     topCentralPredicate: string;
+    /** Highest degree centrality score normalized by (V - 1) */
     maxDegreeCentrality: number;
+    /** True if the specification parsed without syntax errors */
     parseSuccessful: boolean;
+    /** Total count of syntax parser errors + semantic validation errors */
     errorCount: number;
 }
 
-export function analyzeModularityAndCoupling(ast: AlloyModule, document: any): Omit<ModularityMetrics, 'filePath' | 'fileSize' | 'lineCount' | 'parseSuccessful' | 'errorCount'> {
+/**
+ * Analyzes modularity, coupling, call graphs, recursion cycles, and centrality for an Alloy AST.
+ * 
+ * @param ast Root AlloyModule AST node
+ * @param document Parsed Langium Document object
+ * @param options Configuration options (`includeImported`: default false)
+ * @returns Computed modularity and coupling metrics
+ */
+export function analyzeModularityAndCoupling(
+    ast: AlloyModule,
+    document: any,
+    options: { includeImported?: boolean } = {}
+): Omit<ModularityMetrics, 'filePath' | 'fileSize' | 'lineCount' | 'parseSuccessful' | 'errorCount'> {
+    const { includeImported = false } = options;
     const importedModuleCount = ast.import?.length ?? 0;
 
     // Collect all declarations in this module
-    const declarations = new Map<string, any>(); // key -> AST node
-    const declKind = new Map<string, string>(); // key -> 'sig' | 'field' | 'pred' | 'fun' | 'fact' | 'assert'
+    const declarations = new Map<string, any>();
+    const declKind = new Map<string, string>();
 
     if (ast && ast.paragraph) {
         for (let i = 0; i < ast.paragraph.length; i++) {
@@ -86,7 +140,6 @@ export function analyzeModularityAndCoupling(ast: AlloyModule, document: any): O
         }
     }
 
-    // Traverse nodes to collect references & dependencies
     const dependencyAdj = new Map<string, Set<string>>();
     const incomingRefs = new Map<string, number>();
     for (const key of declarations.keys()) {
@@ -97,22 +150,26 @@ export function analyzeModularityAndCoupling(ast: AlloyModule, document: any): O
     let crossModuleReferenceCount = 0;
     const currentDocUri = document.uri.toString();
 
-    // Walk AST of each declaration to build call/dependency graph
+    // Walk AST to build call and dependency graphs
     for (const [declKey, declNode] of declarations.entries()) {
         function findReferences(node: any, visited = new Set()) {
             if (!node || typeof node !== 'object' || visited.has(node)) return;
             visited.add(node);
 
-            // Cross-reference via Langium ref
             if (node.ref) {
                 const targetRef = node.ref;
                 if (targetRef.ref) {
                     const targetNode = targetRef.ref;
                     const targetName = targetNode.name;
+                    const targetDoc = AstUtils.getDocument(targetNode);
+                    const isImported = Boolean(targetDoc && targetDoc.uri.toString() !== currentDocUri);
 
-                    // Check cross-module reference
-                    if (targetNode.$document && targetNode.$document.uri.toString() !== currentDocUri) {
+                    if (isImported) {
                         crossModuleReferenceCount++;
+                    }
+
+                    if (!includeImported && isImported) {
+                        return;
                     }
 
                     if (targetName && declarations.has(targetName) && targetName !== declKey) {
@@ -122,6 +179,14 @@ export function analyzeModularityAndCoupling(ast: AlloyModule, document: any): O
                 }
             } else if (node.id?.ref?.name || node.qualName?.ref?.name) {
                 const refName = node.id?.ref?.name || node.qualName?.ref?.name;
+                const targetNode = node.id?.ref || node.qualName?.ref;
+                const targetDoc = targetNode ? AstUtils.getDocument(targetNode) : undefined;
+                const isImported = Boolean(targetDoc && targetDoc.uri.toString() !== currentDocUri);
+
+                if (!includeImported && isImported) {
+                    return;
+                }
+
                 if (refName && declarations.has(refName) && refName !== declKey) {
                     dependencyAdj.get(declKey)?.add(refName);
                     incomingRefs.set(refName, (incomingRefs.get(refName) || 0) + 1);
@@ -143,7 +208,7 @@ export function analyzeModularityAndCoupling(ast: AlloyModule, document: any): O
         findReferences(declNode);
     }
 
-    // Call Graph metrics for Predicates/Functions
+    // Call Graph metrics for Predicates & Functions
     const callableKeys = Array.from(declarations.keys()).filter(k => declKind.get(k) === 'pred' || declKind.get(k) === 'fun');
     const fanIn = new Map<string, number>();
     const fanOut = new Map<string, number>();
@@ -181,7 +246,7 @@ export function analyzeModularityAndCoupling(ast: AlloyModule, document: any): O
     }
     const declDependencyGraphDensity = totalNodes > 1 ? Math.round((totalEdges / (totalNodes * (totalNodes - 1))) * 1000) / 1000 : 0;
 
-    // Strongly Connected Components (Tarjan's algorithm)
+    // Tarjan's Strongly Connected Components (SCCs) Algorithm
     const nodeKeys = Array.from(declarations.keys());
     let index = 0;
     const indices = new Map<string, number>();
@@ -226,10 +291,10 @@ export function analyzeModularityAndCoupling(ast: AlloyModule, document: any): O
     }
 
     const sccSizes = sccs.map(s => s.length);
-    const stronglyConnectedComponentsCount = sccs.filter(s => s.length > 1).length; // Only non-trivial cycles
+    const stronglyConnectedComponentsCount = sccs.filter(s => s.length > 1).length;
     const maxSccSize = sccSizes.length > 0 ? Math.max(...sccSizes) : 0;
 
-    // Unused Declarations (declarations with 0 incoming references)
+    // Unused Declarations (0 incoming references)
     let unusedDeclarationCount = 0;
     for (const [key, kind] of declKind.entries()) {
         if (kind === 'sig' || kind === 'field' || kind === 'pred' || kind === 'fun') {
@@ -240,7 +305,7 @@ export function analyzeModularityAndCoupling(ast: AlloyModule, document: any): O
         }
     }
 
-    // Highly Coupled Facts (facts referencing >= 3 distinct signatures/fields)
+    // Highly Coupled Facts
     let highlyCoupledFactCount = 0;
     let maxFactCoupling = 0;
     for (const [key, kind] of declKind.entries()) {
@@ -251,7 +316,7 @@ export function analyzeModularityAndCoupling(ast: AlloyModule, document: any): O
         }
     }
 
-    // Centrality of Signatures and Predicates
+    // Degree Centrality
     let topCentralSignature = 'None';
     let topCentralPredicate = 'None';
     let maxSigDegree = -1;
@@ -293,7 +358,14 @@ export function analyzeModularityAndCoupling(ast: AlloyModule, document: any): O
     };
 }
 
-export async function analyzeModularityAction(paths: string[], options: { format?: string; output?: string }): Promise<void> {
+/**
+ * Main action runner to analyze modularity for given file or directory paths.
+ * 
+ * @param paths Array of file or directory paths
+ * @param options Output format ('table', 'json', 'csv'), output file path, and includeImported flag
+ */
+export async function analyzeModularityAction(paths: string[], options: { format?: string; output?: string; includeImported?: boolean } = {}): Promise<void> {
+    const { includeImported = false } = options;
     const alloyServices = createAlloyServices(NodeFileSystem);
     await alloyServices.shared.workspace.WorkspaceManager.initializeWorkspace([]);
     const services = alloyServices.Alloy;
@@ -349,21 +421,17 @@ export async function analyzeModularityAction(paths: string[], options: { format
     }
 
     const results: ModularityMetrics[] = [];
-    let totalBuildTime = 0;
 
     for (const filePath of allFiles) {
         const fileContent = fs.readFileSync(filePath, 'utf-8');
         const lineCount = fileContent.split(/\r?\n/).length;
 
         const uri = URI.file(path.resolve(filePath));
-        const buildStart = performance.now();
         const document = await services.shared.workspace.LangiumDocuments.getOrCreateDocument(uri);
         await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
-        const buildTime = performance.now() - buildStart;
-        totalBuildTime += buildTime;
 
         const ast = document.parseResult?.value as AlloyModule;
-        const metrics = analyzeModularityAndCoupling(ast, document);
+        const metrics = analyzeModularityAndCoupling(ast, document, { includeImported });
 
         const parseErrors = document.parseResult?.parserErrors.length ?? 0;
         const validationErrors = (document.diagnostics ?? []).filter(d => d.severity === 1).length;
@@ -411,7 +479,7 @@ export async function analyzeModularityAction(paths: string[], options: { format
 
         results.push(rowResult);
 
-        // Deep cleanup memory
+        // Memory cleanup
         services.shared.workspace.IndexManager.remove(uri);
         services.shared.workspace.LangiumDocuments.deleteDocument(uri);
     }
@@ -432,27 +500,27 @@ export async function analyzeModularityAction(paths: string[], options: { format
         console.log(outputString);
         if (options.output) {
             fs.writeFileSync(options.output, outputString, 'utf-8');
-            console.log(chalk.green(`\n✔ Results saved to ${options.output}`));
         }
     }
 }
 
-// Direct CLI Invocation
+// Automatically run analyzeModularityAction when called directly from CLI
 if (process.argv[1]?.includes('modularity-analyzer-cli')) {
     const args = process.argv.slice(2);
     const formatIdx = args.indexOf('--format');
     const format = formatIdx !== -1 ? args[formatIdx + 1] : undefined;
     const outputIdx = args.indexOf('--output');
     const output = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
+    const includeImported = args.includes('--include-imported');
 
     const filePaths = args.filter((a, i) => !a.startsWith('--') && (i === 0 || !args[i - 1]?.startsWith('--')));
 
     if (filePaths.length > 0) {
-        analyzeModularityAction(filePaths, { format, output }).catch(err => {
+        analyzeModularityAction(filePaths, { format, output, includeImported }).catch(err => {
             console.error(err);
             process.exit(1);
         });
     } else {
-        console.log('Usage: npx tsx scripts/analysis/modularity-analyzer-cli.ts <path-to-als-file-or-directory> [--format json|csv|table] [--output <filepath>]');
+        console.log('Usage: npx tsx scripts/analysis/modularity-analyzer-cli.ts <path-to-als-file-or-directory> [--include-imported] [--format json|csv|table] [--output <filepath>]');
     }
 }

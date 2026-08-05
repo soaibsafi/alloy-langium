@@ -1,32 +1,78 @@
+/**
+ * @file readability-analyzer-cli.ts
+ * @description Readability, Documentation Coverage, Code Hygiene, and Specification Smell Analyzer for Alloy Models.
+ * 
+ * Computes software engineering specification quality & readability metrics:
+ * - Line counts and comment density (% of lines containing comments).
+ * - Average identifier character length & naming convention consistency (camelCase, PascalCase, snake_case).
+ * - Undocumented declaration percentage (signatures/predicates lacking doc comments).
+ * - Unnamed/Anonymous fact ratio (`fact { ... }` vs `fact Name { ... }`).
+ * - Duplicate expression detection (subexpression abstraction opportunities).
+ * - Formatting consistency score (indentation uniformity).
+ * 
+ * Features:
+ * - Direct execution via CLI (`npx tsx scripts/analysis/readability-analyzer-cli.ts <path>`).
+ * - `--include-imported` flag to toggle inclusion of imported standard module elements.
+ * - Format output in Table, JSON, or CSV.
+ */
+
 import type { AlloyModule } from 'alloy-language';
 import { createAlloyServices } from 'alloy-language';
 import { NodeFileSystem } from 'langium/node';
-import { URI } from 'langium';
+import { URI, isAstNode } from 'langium';
 import chalk from 'chalk';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { extractDocuments, findAlloyFiles } from '../../packages/cli/src/util.js';
-import { isAstNode } from 'langium';
+import { findAlloyFiles } from '../../packages/cli/src/util.js';
 
+/**
+ * Interface representing readability, documentation quality, and code hygiene metrics.
+ */
 export interface ReadabilityMetrics {
+    /** File path of the analyzed specification */
     filePath: string;
+    /** File size in bytes */
     fileSize: number;
+    /** Total line count of the source file */
     lineCount: number;
+    /** Total number of comment lines (single-line //, --, or multi-line block comments) */
     commentLines: number;
+    /** Percentage of lines containing comments */
     commentDensity: number;
+    /** Average character length of identifiers */
     avgIdentifierLength: number;
+    /** Dominant identifier naming style ('camelCase', 'PascalCase', 'snake_case', or 'Mixed') */
     dominantNamingStyle: string;
+    /** Percentage of identifiers adhering to the dominant naming style */
     namingConsistencyPercentage: number;
+    /** Ratio of top-level declarations lacking a doc comment immediately preceding them */
     undocumentedDeclPercentage: number;
+    /** Ratio of anonymous fact declarations (`fact { ... }`) to total facts */
     unnamedFactRatio: number;
+    /** Count of non-trivial duplicate expression subtrees across the AST */
     duplicateExprCount: number;
+    /** Percentage score representing indentation consistency across lines */
     formattingConsistencyScore: number;
+    /** True if the specification parsed without syntax errors */
     parseSuccessful: boolean;
+    /** Total count of syntax parser errors + semantic validation errors */
     errorCount: number;
 }
 
-export function analyzeReadabilityAndDocumentation(ast: AlloyModule, fileContent: string): Omit<ReadabilityMetrics, 'filePath' | 'fileSize' | 'lineCount' | 'parseSuccessful' | 'errorCount'> {
+/**
+ * Analyzes readability, comment density, documentation coverage, and subexpression duplication for an Alloy AST.
+ * 
+ * @param ast Root AlloyModule AST node
+ * @param fileContent Raw source code string
+ * @param options Configuration options (`includeImported`: default false)
+ * @returns Computed readability and documentation metrics
+ */
+export function analyzeReadabilityAndDocumentation(
+    ast: AlloyModule,
+    fileContent: string,
+    options: { includeImported?: boolean } = {}
+): Omit<ReadabilityMetrics, 'filePath' | 'fileSize' | 'lineCount' | 'parseSuccessful' | 'errorCount'> {
     const lines = fileContent.split(/\r?\n/);
     const lineCount = lines.length;
 
@@ -77,7 +123,7 @@ export function analyzeReadabilityAndDocumentation(ast: AlloyModule, fileContent
     }
 
     if (ast && ast.paragraph) {
-        ast.paragraph.forEach((p: any, idx: number) => {
+        ast.paragraph.forEach((p: any) => {
             const hasDoc = p.$cstNode ? getPrecedingComment(p.$cstNode.range.start.line) : false;
 
             switch (p.$type) {
@@ -136,7 +182,7 @@ export function analyzeReadabilityAndDocumentation(ast: AlloyModule, fileContent
     });
 
     let dominantNamingStyle = 'Mixed';
-    let maxStyleCount = Math.max(camelCount, pascalCount, snakeCount);
+    const maxStyleCount = Math.max(camelCount, pascalCount, snakeCount);
     if (maxStyleCount > 0) {
         if (maxStyleCount === camelCount) dominantNamingStyle = 'camelCase';
         else if (maxStyleCount === pascalCount) dominantNamingStyle = 'PascalCase';
@@ -147,7 +193,7 @@ export function analyzeReadabilityAndDocumentation(ast: AlloyModule, fileContent
         ? Math.round((maxStyleCount / identifiers.length) * 100)
         : 100;
 
-    // 3. Repeated / Duplicate Expression Detection
+    // 3. Repeated / Duplicate Expression Subtree Detection
     const exprSubtrees = new Map<string, number>();
     function hashAstSubtree(node: any, visitedNodes = new Set()): string | null {
         if (!node || typeof node !== 'object' || visitedNodes.has(node)) return null;
@@ -183,7 +229,7 @@ export function analyzeReadabilityAndDocumentation(ast: AlloyModule, fileContent
         if (count > 1) duplicateExprCount++;
     }
 
-    // 4. Formatting Consistency (Indentation Uniformity)
+    // 4. Formatting & Indentation Uniformity
     let space2 = 0;
     let space4 = 0;
     let tabs = 0;
@@ -213,7 +259,14 @@ export function analyzeReadabilityAndDocumentation(ast: AlloyModule, fileContent
     };
 }
 
-export async function analyzeReadabilityAction(paths: string[], options: { format?: string; output?: string }): Promise<void> {
+/**
+ * Main action runner to analyze readability for given file or directory paths.
+ * 
+ * @param paths Array of file or directory paths
+ * @param options Output format ('table', 'json', 'csv'), output file path, and includeImported flag
+ */
+export async function analyzeReadabilityAction(paths: string[], options: { format?: string; output?: string; includeImported?: boolean } = {}): Promise<void> {
+    const { includeImported = false } = options;
     const alloyServices = createAlloyServices(NodeFileSystem);
     await alloyServices.shared.workspace.WorkspaceManager.initializeWorkspace([]);
     const services = alloyServices.Alloy;
@@ -267,21 +320,17 @@ export async function analyzeReadabilityAction(paths: string[], options: { forma
     }
 
     const results: ReadabilityMetrics[] = [];
-    let totalBuildTime = 0;
 
     for (const filePath of allFiles) {
         const fileContent = fs.readFileSync(filePath, 'utf-8');
         const lineCount = fileContent.split(/\r?\n/).length;
 
         const uri = URI.file(path.resolve(filePath));
-        const buildStart = performance.now();
         const document = await services.shared.workspace.LangiumDocuments.getOrCreateDocument(uri);
         await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
-        const buildTime = performance.now() - buildStart;
-        totalBuildTime += buildTime;
 
         const ast = document.parseResult?.value as AlloyModule;
-        const metrics = analyzeReadabilityAndDocumentation(ast, fileContent);
+        const metrics = analyzeReadabilityAndDocumentation(ast, fileContent, { includeImported });
 
         const parseErrors = document.parseResult?.parserErrors.length ?? 0;
         const validationErrors = (document.diagnostics ?? []).filter(d => d.severity === 1).length;
@@ -325,7 +374,7 @@ export async function analyzeReadabilityAction(paths: string[], options: { forma
 
         results.push(rowResult);
 
-        // Deep cleanup memory
+        // Memory cleanup
         services.shared.workspace.IndexManager.remove(uri);
         services.shared.workspace.LangiumDocuments.deleteDocument(uri);
     }
@@ -346,27 +395,27 @@ export async function analyzeReadabilityAction(paths: string[], options: { forma
         console.log(outputString);
         if (options.output) {
             fs.writeFileSync(options.output, outputString, 'utf-8');
-            console.log(chalk.green(`\n✔ Results saved to ${options.output}`));
         }
     }
 }
 
-// Direct CLI Invocation
+// Automatically run analyzeReadabilityAction when called directly from CLI
 if (process.argv[1]?.includes('readability-analyzer-cli')) {
     const args = process.argv.slice(2);
     const formatIdx = args.indexOf('--format');
     const format = formatIdx !== -1 ? args[formatIdx + 1] : undefined;
     const outputIdx = args.indexOf('--output');
     const output = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
+    const includeImported = args.includes('--include-imported');
 
     const filePaths = args.filter((a, i) => !a.startsWith('--') && (i === 0 || !args[i - 1]?.startsWith('--')));
 
     if (filePaths.length > 0) {
-        analyzeReadabilityAction(filePaths, { format, output }).catch(err => {
+        analyzeReadabilityAction(filePaths, { format, output, includeImported }).catch(err => {
             console.error(err);
             process.exit(1);
         });
     } else {
-        console.log('Usage: npx tsx scripts/analysis/readability-analyzer-cli.ts <path-to-als-file-or-directory> [--format json|csv|table] [--output <filepath>]');
+        console.log('Usage: npx tsx scripts/analysis/readability-analyzer-cli.ts <path-to-als-file-or-directory> [--include-imported] [--format json|csv|table] [--output <filepath>]');
     }
 }

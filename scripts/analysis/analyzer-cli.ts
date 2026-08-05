@@ -1,32 +1,69 @@
+/**
+ * @file analyzer-cli.ts
+ * @description Core AST Scale & Model Complexity Analyzer for Alloy Specifications.
+ * 
+ * Computes high-level model metrics including file line counts, declaration distributions
+ * (signatures, predicates, functions, facts, assertions, commands), total AST nodes, and a composite
+ * complexity score.
+ * 
+ * Features:
+ * - Direct execution via CLI (`npx tsx scripts/analysis/analyzer-cli.ts <path>`).
+ * - `--include-imported` flag to toggle inclusion of imported standard library module elements.
+ * - Format output in Table, JSON, or CSV.
+ */
+
 import type { AlloyModule } from 'alloy-language';
 import { createAlloyServices } from 'alloy-language';
 import { NodeFileSystem } from 'langium/node';
-import { URI } from 'langium';
+import { URI, isAstNode } from 'langium';
 import chalk from 'chalk';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { extractDocuments, findAlloyFiles } from '../../packages/cli/src/util.js';
-import { isAstNode } from 'langium';
+import { findAlloyFiles } from '../../packages/cli/src/util.js';
 
+/**
+ * Interface representing overall high-level AST scale and complexity metrics.
+ */
 export interface ModelMetrics {
+    /** Absolute or relative file path of the analyzed model */
     filePath: string;
+    /** File size in bytes */
     fileSize: number;
+    /** Total line count of the source file */
     lineCount: number;
+    /** Time taken to parse the specification (ms) */
     parseTime: number;
+    /** Time taken for validation (ms) */
     validationTime: number;
+    /** Total number of signatures declared */
     signatures: number;
+    /** Total number of predicates declared */
     predicates: number;
+    /** Total number of functions declared */
     functions: number;
+    /** Total number of facts declared */
     facts: number;
+    /** Total number of assertions declared */
     assertions: number;
+    /** Total number of commands (`run` and `check`) */
     commands: number;
+    /** Total number of AST nodes in the parsed tree */
     totalNodes: number;
+    /** Calculated composite model complexity score */
     complexityScore: number;
+    /** True if the model parsed cleanly without syntax errors */
     parseSuccessful: boolean;
+    /** Total count of syntax parser errors + semantic validation errors */
     errorCount: number;
 }
 
+/**
+ * Traverses the AST structure to count paragraphs and total AST nodes.
+ * 
+ * @param ast Root AlloyModule AST node
+ * @returns Counts for signatures, predicates, functions, facts, assertions, commands, and total AST nodes
+ */
 export function analyzeASTStructure(ast: any): {
     totalNodes: number;
     signatures: number;
@@ -75,7 +112,7 @@ export function analyzeASTStructure(ast: any): {
 
         let count = 1;
         for (const key in node) {
-            if (node.hasOwnProperty(key) && key !== '$type' && key !== '$container' && key !== '$document') {
+            if (Object.prototype.hasOwnProperty.call(node, key) && key !== '$type' && key !== '$container' && key !== '$document') {
                 const value = node[key];
                 if (Array.isArray(value)) {
                     value.forEach(item => { 
@@ -95,6 +132,14 @@ export function analyzeASTStructure(ast: any): {
     return analysis;
 }
 
+/**
+ * Computes a weighted heuristic complexity score based on AST nodes, paragraph types, line counts, and complex quantifiers.
+ * 
+ * @param astAnalysis Structural node analysis
+ * @param fileContent Raw model source code string
+ * @param lineCount Total line count
+ * @returns Weighted numerical complexity score
+ */
 export function calculateComplexityScore(astAnalysis: any, fileContent: string, lineCount: number): number {
     let score = 0;
     score += lineCount * 0.1;
@@ -116,7 +161,13 @@ export function calculateComplexityScore(astAnalysis: any, fileContent: string, 
     return Math.round(score * 100) / 100;
 }
 
-export async function analyzeAction(paths: string[], options: { format?: string; output?: string }): Promise<void> {
+/**
+ * Main action runner to analyze given paths and print or save results.
+ * 
+ * @param paths Array of file or directory paths to analyze
+ * @param options Output format ('table', 'json', 'csv'), output file path, and includeImported flag
+ */
+export async function analyzeAction(paths: string[], options: { format?: string; output?: string; includeImported?: boolean } = {}): Promise<void> {
     const alloyServices = createAlloyServices(NodeFileSystem);
     await alloyServices.shared.workspace.WorkspaceManager.initializeWorkspace([]);
     const services = alloyServices.Alloy;
@@ -154,7 +205,6 @@ export async function analyzeAction(paths: string[], options: { format?: string;
     }
 
     const results: ModelMetrics[] = [];
-    let totalBuildTime = 0;
 
     for (const filePath of allFiles) {
         const fileContent = fs.readFileSync(filePath, 'utf-8');
@@ -165,7 +215,6 @@ export async function analyzeAction(paths: string[], options: { format?: string;
         const document = await services.shared.workspace.LangiumDocuments.getOrCreateDocument(uri);
         await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
         const buildTime = performance.now() - buildStart;
-        totalBuildTime += buildTime;
 
         const ast = document.parseResult?.value as AlloyModule;
         const astAnalysis = analyzeASTStructure(ast);
@@ -197,7 +246,7 @@ export async function analyzeAction(paths: string[], options: { format?: string;
         }
         results.push(rowResult);
 
-        // Deep cleanup memory
+        // Memory cleanup
         services.shared.workspace.IndexManager.remove(uri);
         services.shared.workspace.LangiumDocuments.deleteDocument(uri);
     }
@@ -226,11 +275,7 @@ export async function analyzeAction(paths: string[], options: { format?: string;
         console.log(`🔶 Total predicates:   ${totalPreds}`);
         console.log(`📜 Total facts:        ${totalFacts}`);
         console.log(`🧮 Average complexity: ${chalk.magenta.bold(avgComplexity)}`);
-        if (options.output) {
-            console.log(chalk.green(`\n✔ Results printed to console (Table format output file saving not strictly defined, run as CSV/JSON for data output).`));
-        }
     }
-
 }
 
 // Automatically run analyzeAction when called directly from CLI
@@ -240,16 +285,16 @@ if (process.argv[1]?.includes('analyzer-cli')) {
     const format = formatIdx !== -1 ? args[formatIdx + 1] : undefined;
     const outputIdx = args.indexOf('--output');
     const output = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
+    const includeImported = args.includes('--include-imported');
 
     const filePaths = args.filter((a, i) => !a.startsWith('--') && (i === 0 || !args[i - 1]?.startsWith('--')));
 
     if (filePaths.length > 0) {
-        analyzeAction(filePaths, { format, output }).catch(err => {
+        analyzeAction(filePaths, { format, output, includeImported }).catch(err => {
             console.error(err);
             process.exit(1);
         });
     } else {
-        console.log('Usage: npx tsx scripts/analysis/analyzer-cli.ts <path-to-als-file-or-directory> [--format json|csv|table] [--output <filepath>]');
+        console.log('Usage: npx tsx scripts/analysis/analyzer-cli.ts <path-to-als-file-or-directory> [--include-imported] [--format json|csv|table] [--output <filepath>]');
     }
 }
-
