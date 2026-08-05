@@ -1,9 +1,11 @@
 import type { AlloyModule } from 'alloy-language';
 import { createAlloyServices } from 'alloy-language';
 import { NodeFileSystem } from 'langium/node';
+import { URI } from 'langium';
 import chalk from 'chalk';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { extractDocuments, findAlloyFiles } from '../../packages/cli/src/util.js';
 import { isAstNode } from 'langium';
 
@@ -315,37 +317,9 @@ export async function analyzeModularityAction(paths: string[], options: { format
 
     console.log(chalk.bold(`🧩 Analyzing Modularity and Coupling for ${allFiles.length} Specification File(s)...\n`));
 
-    const documents = await extractDocuments(allFiles, services);
-    const results: ModularityMetrics[] = [];
-
-    for (const document of documents) {
-        const filePath = document.uri.fsPath;
-        const fileContent = fs.readFileSync(filePath, 'utf-8');
-        const lineCount = fileContent.split(/\r?\n/).length;
-
-        const ast = document.parseResult?.value as AlloyModule;
-        const metrics = analyzeModularityAndCoupling(ast, document);
-
-        const parseErrors = document.parseResult?.parserErrors.length ?? 0;
-        const validationErrors = (document.diagnostics ?? []).filter(d => d.severity === 1).length;
-        const errorCount = parseErrors + validationErrors;
-
-        results.push({
-            filePath,
-            fileSize: fileContent.length,
-            lineCount,
-            ...metrics,
-            parseSuccessful: parseErrors === 0,
-            errorCount
-        });
-    }
-
     const format = (options.format || 'table').toLowerCase();
-    let outputString = '';
 
-    if (format === 'json') {
-        outputString = JSON.stringify(results, null, 2);
-    } else if (format === 'csv') {
+    if (format === 'csv') {
         const headers = [
             'filePath', 'lineCount', 'importedModuleCount', 'crossModuleReferenceCount',
             'maxPredicateFanIn', 'avgPredicateFanIn', 'maxPredicateFanOut', 'avgPredicateFanOut',
@@ -353,10 +327,10 @@ export async function analyzeModularityAction(paths: string[], options: { format
             'unusedDeclarationCount', 'highlyCoupledFactCount', 'maxFactCoupling',
             'topCentralSignature', 'topCentralPredicate', 'maxDegreeCentrality', 'errorCount'
         ];
-        const rows = results.map(r => headers.map(h => (r as any)[h]).join(','));
-        outputString = [headers.join(','), ...rows].join('\n');
-    } else {
-        // Table view
+        const headerRow = headers.join(',');
+        console.log(headerRow);
+        if (options.output) fs.writeFileSync(options.output, headerRow + '\n', 'utf-8');
+    } else if (format === 'table') {
         console.log(chalk.bold('-----------------------------------------------------------------------------------------------------------------------------------'));
         console.log(
             `${chalk.cyan.bold('File')} | ` +
@@ -372,44 +346,94 @@ export async function analyzeModularityAction(paths: string[], options: { format
             `${chalk.green('Errors')}`
         );
         console.log(chalk.bold('-----------------------------------------------------------------------------------------------------------------------------------'));
+    }
 
-        for (const r of results) {
-            const shortPath = path.basename(r.filePath);
-            const errStr = r.errorCount > 0 ? chalk.red(String(r.errorCount)) : chalk.green('0');
-            const fanInStr = `${r.maxPredicateFanIn}/${r.avgPredicateFanIn}`;
-            const fanOutStr = `${r.maxPredicateFanOut}/${r.avgPredicateFanOut}`;
+    const results: ModularityMetrics[] = [];
+    let totalBuildTime = 0;
+
+    for (const filePath of allFiles) {
+        const fileContent = fs.readFileSync(filePath, 'utf-8');
+        const lineCount = fileContent.split(/\r?\n/).length;
+
+        const uri = URI.file(path.resolve(filePath));
+        const buildStart = performance.now();
+        const document = await services.shared.workspace.LangiumDocuments.getOrCreateDocument(uri);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+        const buildTime = performance.now() - buildStart;
+        totalBuildTime += buildTime;
+
+        const ast = document.parseResult?.value as AlloyModule;
+        const metrics = analyzeModularityAndCoupling(ast, document);
+
+        const parseErrors = document.parseResult?.parserErrors.length ?? 0;
+        const validationErrors = (document.diagnostics ?? []).filter(d => d.severity === 1).length;
+        const errorCount = parseErrors + validationErrors;
+
+        const rowResult = {
+            filePath,
+            fileSize: fileContent.length,
+            lineCount,
+            ...metrics,
+            parseSuccessful: parseErrors === 0,
+            errorCount
+        };
+
+        if (format === 'csv') {
+            const headers = [
+                'filePath', 'lineCount', 'importedModuleCount', 'crossModuleReferenceCount',
+                'maxPredicateFanIn', 'avgPredicateFanIn', 'maxPredicateFanOut', 'avgPredicateFanOut',
+                'declDependencyGraphDensity', 'stronglyConnectedComponentsCount', 'maxSccSize',
+                'unusedDeclarationCount', 'highlyCoupledFactCount', 'maxFactCoupling',
+                'topCentralSignature', 'topCentralPredicate', 'maxDegreeCentrality', 'errorCount'
+            ];
+            const rowStr = headers.map(h => (rowResult as any)[h]).join(',');
+            console.log(rowStr);
+            if (options.output) fs.appendFileSync(options.output, rowStr + '\n', 'utf-8');
+        } else if (format === 'table') {
+            const shortPath = path.basename(rowResult.filePath);
+            const errStr = rowResult.errorCount > 0 ? chalk.red(String(rowResult.errorCount)) : chalk.green('0');
+            const fanInStr = `${rowResult.maxPredicateFanIn}/${rowResult.avgPredicateFanIn}`;
+            const fanOutStr = `${rowResult.maxPredicateFanOut}/${rowResult.avgPredicateFanOut}`;
             console.log(
                 `${chalk.bold(shortPath.padEnd(25))} | ` +
-                `${String(r.importedModuleCount).padEnd(7)} | ` +
+                `${String(rowResult.importedModuleCount).padEnd(7)} | ` +
                 `${fanInStr.padEnd(16)} | ` +
                 `${fanOutStr.padEnd(17)} | ` +
-                `${String(r.declDependencyGraphDensity).padEnd(7)} | ` +
-                `${String(r.stronglyConnectedComponentsCount).padEnd(4)} | ` +
-                `${String(r.unusedDeclarationCount).padEnd(6)} | ` +
-                `${String(r.highlyCoupledFactCount).padEnd(13)} | ` +
-                `${chalk.magenta.bold(r.topCentralSignature.padEnd(11))} | ` +
-                `${chalk.magenta.bold(r.topCentralPredicate.padEnd(12))} | ` +
+                `${String(rowResult.declDependencyGraphDensity).padEnd(7)} | ` +
+                `${String(rowResult.stronglyConnectedComponentsCount).padEnd(4)} | ` +
+                `${String(rowResult.unusedDeclarationCount).padEnd(6)} | ` +
+                `${String(rowResult.highlyCoupledFactCount).padEnd(13)} | ` +
+                `${chalk.magenta.bold(rowResult.topCentralSignature.padEnd(11))} | ` +
+                `${chalk.magenta.bold(rowResult.topCentralPredicate.padEnd(12))} | ` +
                 `${errStr}`
             );
         }
-        console.log(chalk.bold('-----------------------------------------------------------------------------------------------------------------------------------\n'));
 
+        results.push(rowResult);
+
+        // Deep cleanup memory
+        services.shared.workspace.IndexManager.remove(uri);
+        services.shared.workspace.LangiumDocuments.deleteDocument(uri);
+    }
+
+    if (format === 'table') {
+        console.log(chalk.bold('-----------------------------------------------------------------------------------------------------------------------------------\n'));
         console.log(chalk.bold('=== MODULARITY & COUPLING RESEARCH SUMMARY ==='));
         console.log(`📁 Total Models Analyzed:             ${results.length}`);
         console.log(`📦 Total Imported Modules:           ${results.reduce((s, r) => s + r.importedModuleCount, 0)}`);
         console.log(`🌐 Total Cross-Module References:    ${results.reduce((s, r) => s + r.crossModuleReferenceCount, 0)}`);
-        console.log(`🕸️ Avg Graph Density:                 ${(results.reduce((s, r) => s + r.declDependencyGraphDensity, 0) / results.length).toFixed(3)}`);
+        console.log(`🕸️ Avg Graph Density:                 ${results.length > 0 ? (results.reduce((s, r) => s + r.declDependencyGraphDensity, 0) / results.length).toFixed(3) : 0}`);
         console.log(`🔄 Total Recursive SCCs:             ${results.reduce((s, r) => s + r.stronglyConnectedComponentsCount, 0)}`);
         console.log(`⚡ Total Highly Coupled Facts:       ${results.reduce((s, r) => s + r.highlyCoupledFactCount, 0)}`);
     }
 
-    if (format === 'json' || format === 'csv') {
+    if (format === 'json') {
+        const outputString = JSON.stringify(results, null, 2);
         console.log(outputString);
-    }
-
-    if (options.output) {
-        fs.writeFileSync(options.output, outputString || JSON.stringify(results, null, 2), 'utf-8');
-        console.log(chalk.green(`\n✔ Results saved to ${options.output}`));
+        if (options.output) {
+            fs.writeFileSync(options.output, outputString, 'utf-8');
+            console.log(chalk.green(`\n✔ Results saved to ${options.output}`));
+        }
     }
 }
 

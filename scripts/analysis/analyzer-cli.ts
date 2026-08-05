@@ -1,11 +1,13 @@
 import type { AlloyModule } from 'alloy-language';
 import { createAlloyServices } from 'alloy-language';
 import { NodeFileSystem } from 'langium/node';
+import { URI } from 'langium';
 import chalk from 'chalk';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { extractDocuments, findAlloyFiles } from '../../packages/cli/src/util.js';
+import { isAstNode } from 'langium';
 
 export interface ModelMetrics {
     filePath: string;
@@ -76,8 +78,12 @@ export function analyzeASTStructure(ast: any): {
             if (node.hasOwnProperty(key) && key !== '$type' && key !== '$container' && key !== '$document') {
                 const value = node[key];
                 if (Array.isArray(value)) {
-                    value.forEach(item => { count += countNodes(item, visited, depth + 1); });
-                } else if (typeof value === 'object') {
+                    value.forEach(item => { 
+                        if (item && typeof item === 'object' && isAstNode(item)) {
+                            count += countNodes(item, visited, depth + 1); 
+                        }
+                    });
+                } else if (value && typeof value === 'object' && isAstNode(value)) {
                     count += countNodes(value, visited, depth + 1);
                 }
             }
@@ -134,16 +140,32 @@ export async function analyzeAction(paths: string[], options: { format?: string;
 
     console.log(chalk.bold(`📊 Analyzing ${allFiles.length} Alloy specification file(s)...\n`));
 
-    const buildStart = performance.now();
-    const documents = await extractDocuments(allFiles, services);
-    const buildTime = performance.now() - buildStart;
+    const format = (options.format || 'table').toLowerCase();
+    
+    if (format === 'csv') {
+        const headers = ['filePath', 'fileSize', 'lineCount', 'parseTime', 'validationTime', 'signatures', 'predicates', 'functions', 'facts', 'assertions', 'commands', 'totalNodes', 'complexityScore', 'errorCount'];
+        const headerRow = headers.join(',');
+        console.log(headerRow);
+        if (options.output) fs.writeFileSync(options.output, headerRow + '\n', 'utf-8');
+    } else if (format === 'table') {
+        console.log(chalk.bold('---------------------------------------------------------------------------------------------------------'));
+        console.log(`${chalk.cyan.bold('File')} | ${chalk.yellow('Sigs')} | ${chalk.yellow('Preds')} | ${chalk.yellow('Funs')} | ${chalk.yellow('Facts')} | ${chalk.yellow('Asserts')} | ${chalk.yellow('Cmds')} | ${chalk.yellow('Nodes')} | ${chalk.magenta.bold('Complexity')} | ${chalk.green('Errors')}`);
+        console.log(chalk.bold('---------------------------------------------------------------------------------------------------------'));
+    }
 
     const results: ModelMetrics[] = [];
+    let totalBuildTime = 0;
 
-    for (const document of documents) {
-        const filePath = document.uri.fsPath;
+    for (const filePath of allFiles) {
         const fileContent = fs.readFileSync(filePath, 'utf-8');
         const lineCount = fileContent.split(/\r?\n/).length;
+
+        const uri = URI.file(path.resolve(filePath));
+        const buildStart = performance.now();
+        const document = await services.shared.workspace.LangiumDocuments.getOrCreateDocument(uri);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+        const buildTime = performance.now() - buildStart;
+        totalBuildTime += buildTime;
 
         const ast = document.parseResult?.value as AlloyModule;
         const astAnalysis = analyzeASTStructure(ast);
@@ -151,45 +173,52 @@ export async function analyzeAction(paths: string[], options: { format?: string;
 
         const errorCount = (document.diagnostics ?? []).filter(d => d.severity === 1).length + (document.parseResult?.parserErrors.length ?? 0);
 
-        results.push({
+        const rowResult = {
             filePath,
             fileSize: fileContent.length,
             lineCount,
-            parseTime: Math.round((buildTime / documents.length) * 100) / 100,
+            parseTime: Math.round(buildTime * 100) / 100,
             validationTime: 0,
             ...astAnalysis,
             complexityScore,
             parseSuccessful: (document.parseResult?.parserErrors.length ?? 0) === 0,
             errorCount
-        });
+        };
+
+        if (format === 'csv') {
+            const headers = ['filePath', 'fileSize', 'lineCount', 'parseTime', 'validationTime', 'signatures', 'predicates', 'functions', 'facts', 'assertions', 'commands', 'totalNodes', 'complexityScore', 'errorCount'];
+            const rowStr = headers.map(h => (rowResult as any)[h]).join(',');
+            console.log(rowStr);
+            if (options.output) fs.appendFileSync(options.output, rowStr + '\n', 'utf-8');
+        } else if (format === 'table') {
+            const shortPath = path.basename(rowResult.filePath);
+            const errStr = rowResult.errorCount > 0 ? chalk.red(String(rowResult.errorCount)) : chalk.green('0');
+            console.log(`${chalk.bold(shortPath.padEnd(25))} | ${String(rowResult.signatures).padEnd(4)} | ${String(rowResult.predicates).padEnd(5)} | ${String(rowResult.functions).padEnd(4)} | ${String(rowResult.facts).padEnd(5)} | ${String(rowResult.assertions).padEnd(7)} | ${String(rowResult.commands).padEnd(4)} | ${String(rowResult.totalNodes).padEnd(5)} | ${chalk.magenta.bold(String(rowResult.complexityScore).padEnd(10))} | ${errStr}`);
+        }
+        results.push(rowResult);
+
+        // Deep cleanup memory
+        services.shared.workspace.IndexManager.remove(uri);
+        services.shared.workspace.LangiumDocuments.deleteDocument(uri);
     }
 
-    const format = (options.format || 'table').toLowerCase();
-    let outputString = '';
+    if (format === 'table') {
+        console.log(chalk.bold('---------------------------------------------------------------------------------------------------------\n'));
+    }
 
     if (format === 'json') {
-        outputString = JSON.stringify(results, null, 2);
-    } else if (format === 'csv') {
-        const headers = ['filePath', 'fileSize', 'lineCount', 'parseTime', 'validationTime', 'signatures', 'predicates', 'functions', 'facts', 'assertions', 'commands', 'totalNodes', 'complexityScore', 'errorCount'];
-        const rows = results.map(r => headers.map(h => (r as any)[h]).join(','));
-        outputString = [headers.join(','), ...rows].join('\n');
-    } else {
-        // Table / Formatted Text
-        console.log(chalk.bold('---------------------------------------------------------------------------------------------------------'));
-        console.log(`${chalk.cyan.bold('File')} | ${chalk.yellow('Sigs')} | ${chalk.yellow('Preds')} | ${chalk.yellow('Funs')} | ${chalk.yellow('Facts')} | ${chalk.yellow('Asserts')} | ${chalk.yellow('Cmds')} | ${chalk.yellow('Nodes')} | ${chalk.magenta.bold('Complexity')} | ${chalk.green('Errors')}`);
-        console.log(chalk.bold('---------------------------------------------------------------------------------------------------------'));
-
-        for (const r of results) {
-            const shortPath = path.basename(r.filePath);
-            const errStr = r.errorCount > 0 ? chalk.red(String(r.errorCount)) : chalk.green('0');
-            console.log(`${chalk.bold(shortPath.padEnd(25))} | ${String(r.signatures).padEnd(4)} | ${String(r.predicates).padEnd(5)} | ${String(r.functions).padEnd(4)} | ${String(r.facts).padEnd(5)} | ${String(r.assertions).padEnd(7)} | ${String(r.commands).padEnd(4)} | ${String(r.totalNodes).padEnd(5)} | ${chalk.magenta.bold(String(r.complexityScore).padEnd(10))} | ${errStr}`);
+        const outputString = JSON.stringify(results, null, 2);
+        console.log(outputString);
+        if (options.output) {
+            fs.writeFileSync(options.output, outputString, 'utf-8');
         }
-        console.log(chalk.bold('---------------------------------------------------------------------------------------------------------\n'));
+    }
 
+    if (format === 'table') {
         const totalSigs = results.reduce((s, r) => s + r.signatures, 0);
         const totalPreds = results.reduce((s, r) => s + r.predicates, 0);
         const totalFacts = results.reduce((s, r) => s + r.facts, 0);
-        const avgComplexity = (results.reduce((s, r) => s + r.complexityScore, 0) / results.length).toFixed(2);
+        const avgComplexity = results.length > 0 ? (results.reduce((s, r) => s + r.complexityScore, 0) / results.length).toFixed(2) : "0";
 
         console.log(chalk.bold('=== ANALYSIS SUMMARY ==='));
         console.log(`📁 Total models:       ${results.length}`);
@@ -197,16 +226,11 @@ export async function analyzeAction(paths: string[], options: { format?: string;
         console.log(`🔶 Total predicates:   ${totalPreds}`);
         console.log(`📜 Total facts:        ${totalFacts}`);
         console.log(`🧮 Average complexity: ${chalk.magenta.bold(avgComplexity)}`);
+        if (options.output) {
+            console.log(chalk.green(`\n✔ Results printed to console (Table format output file saving not strictly defined, run as CSV/JSON for data output).`));
+        }
     }
 
-    if (format === 'json' || format === 'csv') {
-        console.log(outputString);
-    }
-
-    if (options.output) {
-        fs.writeFileSync(options.output, outputString || JSON.stringify(results, null, 2), 'utf-8');
-        console.log(chalk.green(`\n✔ Results saved to ${options.output}`));
-    }
 }
 
 // Automatically run analyzeAction when called directly from CLI

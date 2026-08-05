@@ -1,10 +1,13 @@
 import type { AlloyModule } from 'alloy-language';
 import { createAlloyServices } from 'alloy-language';
 import { NodeFileSystem } from 'langium/node';
+import { URI } from 'langium';
 import chalk from 'chalk';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { extractDocuments, findAlloyFiles } from '../../packages/cli/src/util.js';
+import { isAstNode } from 'langium';
 
 export interface ReadabilityMetrics {
     filePath: string;
@@ -159,8 +162,15 @@ export function analyzeReadabilityAndDocumentation(ast: AlloyModule, fileContent
         for (const k in node) {
             if (Object.prototype.hasOwnProperty.call(node, k) && !k.startsWith('$') && k !== 'container') {
                 const val = node[k];
-                if (Array.isArray(val)) val.forEach(item => hashAstSubtree(item, visitedNodes));
-                else if (typeof val === 'object') hashAstSubtree(val, visitedNodes);
+                if (Array.isArray(val)) {
+                    val.forEach(item => {
+                        if (item && typeof item === 'object' && isAstNode(item)) {
+                            hashAstSubtree(item, visitedNodes);
+                        }
+                    });
+                } else if (val && typeof val === 'object' && isAstNode(val)) {
+                    hashAstSubtree(val, visitedNodes);
+                }
             }
         }
         return null;
@@ -227,46 +237,18 @@ export async function analyzeReadabilityAction(paths: string[], options: { forma
 
     console.log(chalk.bold(`📖 Analyzing Readability and Documentation Quality for ${allFiles.length} File(s)...\n`));
 
-    const documents = await extractDocuments(allFiles, services);
-    const results: ReadabilityMetrics[] = [];
-
-    for (const document of documents) {
-        const filePath = document.uri.fsPath;
-        const fileContent = fs.readFileSync(filePath, 'utf-8');
-        const lineCount = fileContent.split(/\r?\n/).length;
-
-        const ast = document.parseResult?.value as AlloyModule;
-        const metrics = analyzeReadabilityAndDocumentation(ast, fileContent);
-
-        const parseErrors = document.parseResult?.parserErrors.length ?? 0;
-        const validationErrors = (document.diagnostics ?? []).filter(d => d.severity === 1).length;
-        const errorCount = parseErrors + validationErrors;
-
-        results.push({
-            filePath,
-            fileSize: fileContent.length,
-            lineCount,
-            ...metrics,
-            parseSuccessful: parseErrors === 0,
-            errorCount
-        });
-    }
-
     const format = (options.format || 'table').toLowerCase();
-    let outputString = '';
 
-    if (format === 'json') {
-        outputString = JSON.stringify(results, null, 2);
-    } else if (format === 'csv') {
+    if (format === 'csv') {
         const headers = [
             'filePath', 'lineCount', 'commentLines', 'commentDensity', 'avgIdentifierLength',
             'dominantNamingStyle', 'namingConsistencyPercentage', 'undocumentedDeclPercentage',
             'unnamedFactRatio', 'duplicateExprCount', 'formattingConsistencyScore', 'errorCount'
         ];
-        const rows = results.map(r => headers.map(h => (r as any)[h]).join(','));
-        outputString = [headers.join(','), ...rows].join('\n');
-    } else {
-        // Table view
+        const headerRow = headers.join(',');
+        console.log(headerRow);
+        if (options.output) fs.writeFileSync(options.output, headerRow + '\n', 'utf-8');
+    } else if (format === 'table') {
         console.log(chalk.bold('-----------------------------------------------------------------------------------------------------------------------------------'));
         console.log(
             `${chalk.cyan.bold('File')} | ` +
@@ -282,42 +264,90 @@ export async function analyzeReadabilityAction(paths: string[], options: { forma
             `${chalk.green('Errors')}`
         );
         console.log(chalk.bold('-----------------------------------------------------------------------------------------------------------------------------------'));
+    }
 
-        for (const r of results) {
-            const shortPath = path.basename(r.filePath);
-            const errStr = r.errorCount > 0 ? chalk.red(String(r.errorCount)) : chalk.green('0');
+    const results: ReadabilityMetrics[] = [];
+    let totalBuildTime = 0;
+
+    for (const filePath of allFiles) {
+        const fileContent = fs.readFileSync(filePath, 'utf-8');
+        const lineCount = fileContent.split(/\r?\n/).length;
+
+        const uri = URI.file(path.resolve(filePath));
+        const buildStart = performance.now();
+        const document = await services.shared.workspace.LangiumDocuments.getOrCreateDocument(uri);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+        const buildTime = performance.now() - buildStart;
+        totalBuildTime += buildTime;
+
+        const ast = document.parseResult?.value as AlloyModule;
+        const metrics = analyzeReadabilityAndDocumentation(ast, fileContent);
+
+        const parseErrors = document.parseResult?.parserErrors.length ?? 0;
+        const validationErrors = (document.diagnostics ?? []).filter(d => d.severity === 1).length;
+        const errorCount = parseErrors + validationErrors;
+
+        const rowResult = {
+            filePath,
+            fileSize: fileContent.length,
+            lineCount,
+            ...metrics,
+            parseSuccessful: parseErrors === 0,
+            errorCount
+        };
+
+        if (format === 'csv') {
+            const headers = [
+                'filePath', 'lineCount', 'commentLines', 'commentDensity', 'avgIdentifierLength',
+                'dominantNamingStyle', 'namingConsistencyPercentage', 'undocumentedDeclPercentage',
+                'unnamedFactRatio', 'duplicateExprCount', 'formattingConsistencyScore', 'errorCount'
+            ];
+            const rowStr = headers.map(h => (rowResult as any)[h]).join(',');
+            console.log(rowStr);
+            if (options.output) fs.appendFileSync(options.output, rowStr + '\n', 'utf-8');
+        } else if (format === 'table') {
+            const shortPath = path.basename(rowResult.filePath);
+            const errStr = rowResult.errorCount > 0 ? chalk.red(String(rowResult.errorCount)) : chalk.green('0');
             console.log(
                 `${chalk.bold(shortPath.padEnd(25))} | ` +
-                `${String(r.lineCount).padEnd(5)} | ` +
-                `${(String(r.commentDensity) + '%').padEnd(9)} | ` +
-                `${String(r.avgIdentifierLength).padEnd(10)} | ` +
-                `${r.dominantNamingStyle.padEnd(12)} | ` +
-                `${(String(r.namingConsistencyPercentage) + '%').padEnd(7)} | ` +
-                `${(String(r.undocumentedDeclPercentage * 100) + '%').padEnd(7)} | ` +
-                `${(String(r.unnamedFactRatio * 100) + '%').padEnd(10)} | ` +
-                `${chalk.magenta.bold(String(r.duplicateExprCount).padEnd(9))} | ` +
-                `${chalk.magenta.bold((String(r.formattingConsistencyScore) + '%').padEnd(12))} | ` +
+                `${String(rowResult.lineCount).padEnd(5)} | ` +
+                `${(String(rowResult.commentDensity) + '%').padEnd(9)} | ` +
+                `${String(rowResult.avgIdentifierLength).padEnd(10)} | ` +
+                `${rowResult.dominantNamingStyle.padEnd(12)} | ` +
+                `${(String(rowResult.namingConsistencyPercentage) + '%').padEnd(7)} | ` +
+                `${(String(rowResult.undocumentedDeclPercentage * 100) + '%').padEnd(7)} | ` +
+                `${(String(rowResult.unnamedFactRatio * 100) + '%').padEnd(10)} | ` +
+                `${chalk.magenta.bold(String(rowResult.duplicateExprCount).padEnd(9))} | ` +
+                `${chalk.magenta.bold((String(rowResult.formattingConsistencyScore) + '%').padEnd(12))} | ` +
                 `${errStr}`
             );
         }
-        console.log(chalk.bold('-----------------------------------------------------------------------------------------------------------------------------------\n'));
 
+        results.push(rowResult);
+
+        // Deep cleanup memory
+        services.shared.workspace.IndexManager.remove(uri);
+        services.shared.workspace.LangiumDocuments.deleteDocument(uri);
+    }
+
+    if (format === 'table') {
+        console.log(chalk.bold('-----------------------------------------------------------------------------------------------------------------------------------\n'));
         console.log(chalk.bold('=== READABILITY & DOCUMENTATION RESEARCH SUMMARY ==='));
         console.log(`📁 Total Models Analyzed:            ${results.length}`);
-        console.log(`📝 Avg Comment Density:             ${(results.reduce((s, r) => s + r.commentDensity, 0) / results.length).toFixed(2)}%`);
-        console.log(`🏷️ Avg Identifier Length:           ${(results.reduce((s, r) => s + r.avgIdentifierLength, 0) / results.length).toFixed(2)} chars`);
-        console.log(`❓ Avg Undocumented Declarations:   ${((results.reduce((s, r) => s + r.undocumentedDeclPercentage, 0) / results.length) * 100).toFixed(1)}%`);
-        console.log(`⚠️ Avg Anonymous Facts Ratio:       ${((results.reduce((s, r) => s + r.unnamedFactRatio, 0) / results.length) * 100).toFixed(1)}%`);
-        console.log(`✨ Avg Formatting Consistency:      ${(results.reduce((s, r) => s + r.formattingConsistencyScore, 0) / results.length).toFixed(1)}%`);
+        console.log(`📝 Avg Comment Density:             ${results.length > 0 ? (results.reduce((s, r) => s + r.commentDensity, 0) / results.length).toFixed(2) : 0}%`);
+        console.log(`🏷️ Avg Identifier Length:           ${results.length > 0 ? (results.reduce((s, r) => s + r.avgIdentifierLength, 0) / results.length).toFixed(2) : 0} chars`);
+        console.log(`❓ Avg Undocumented Declarations:   ${results.length > 0 ? ((results.reduce((s, r) => s + r.undocumentedDeclPercentage, 0) / results.length) * 100).toFixed(1) : 0}%`);
+        console.log(`⚠️ Avg Anonymous Facts Ratio:       ${results.length > 0 ? ((results.reduce((s, r) => s + r.unnamedFactRatio, 0) / results.length) * 100).toFixed(1) : 0}%`);
+        console.log(`✨ Avg Formatting Consistency:      ${results.length > 0 ? (results.reduce((s, r) => s + r.formattingConsistencyScore, 0) / results.length).toFixed(1) : 0}%`);
     }
 
-    if (format === 'json' || format === 'csv') {
+    if (format === 'json') {
+        const outputString = JSON.stringify(results, null, 2);
         console.log(outputString);
-    }
-
-    if (options.output) {
-        fs.writeFileSync(options.output, outputString || JSON.stringify(results, null, 2), 'utf-8');
-        console.log(chalk.green(`\n✔ Results saved to ${options.output}`));
+        if (options.output) {
+            fs.writeFileSync(options.output, outputString, 'utf-8');
+            console.log(chalk.green(`\n✔ Results saved to ${options.output}`));
+        }
     }
 }
 
