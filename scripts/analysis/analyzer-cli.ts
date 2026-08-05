@@ -212,11 +212,20 @@ export async function analyzeAction(paths: string[], options: { format?: string;
 // Automatically run analyzeAction when called directly from CLI
 if (process.argv[1]?.includes('analyzer-cli')) {
     const args = process.argv.slice(2);
-    if (args.length > 0) {
-        analyzeAction(args, {}).catch(err => {
+    const formatIdx = args.indexOf('--format');
+    const format = formatIdx !== -1 ? args[formatIdx + 1] : undefined;
+    const outputIdx = args.indexOf('--output');
+    const output = outputIdx !== -1 ? args[outputIdx + 1] : undefined;
+
+    const filePaths = args.filter((a, i) => !a.startsWith('--') && (i === 0 || !args[i - 1]?.startsWith('--')));
+
+    if (filePaths.length > 0) {
+        analyzeAction(filePaths, { format, output }).catch(err => {
             console.error(err);
             process.exit(1);
         });
+    } else {
+        console.log('Usage: npx tsx scripts/analysis/analyzer-cli.ts <path-to-als-file-or-directory> [--format json|csv|table] [--output <filepath>]');
     }
 }
 
