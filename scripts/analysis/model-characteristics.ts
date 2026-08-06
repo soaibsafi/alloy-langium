@@ -283,9 +283,9 @@ export function extractSigMetrics(ctx: ExtractionContext): Partial<ModelCharacte
         const ext = s.sigExt;
         if (!ext) {
             topLevelSigCount++;
-        } else if (ext.kind === 'extends' || ext.$type === 'SigExtExtends') {
+        } else if (ext.keyword === 'extends') {
             extendsSigCount++;
-        } else if (ext.kind === 'in' || ext.$type === 'SigExtIn') {
+        } else if (ext.keyword === 'in') {
             subsetSigCount++;
         } else {
             topLevelSigCount++;
@@ -295,8 +295,9 @@ export function extractSigMetrics(ctx: ExtractionContext): Partial<ModelCharacte
         else if (s.mult === 'lone' || s.isLone) loneSigCount++;
         else if (s.mult === 'some' || s.isSome) someSigCount++;
 
-        if (s.abstract || s.isAbstract) abstractSigCount++;
-        if (s.var || s.isVar) varSigCount++;
+        const prefix = s.$cstNode?.text.substring(0, s.$cstNode.text.indexOf('sig')) || '';
+        if (s.abstract || s.isAbstract || prefix.includes('abstract')) abstractSigCount++;
+        if (s.var || s.isVar || prefix.includes('var')) varSigCount++;
     }
 
     if (ctx.ast?.paragraph) {
@@ -305,6 +306,18 @@ export function extractSigMetrics(ctx: ExtractionContext): Partial<ModelCharacte
                 processSig(p);
                 if (p.additionalSigs) {
                     for (const add of p.additionalSigs) {
+                        // Inherit properties from parent SigDecl
+                        add.sigExt = p.sigExt;
+                        add.mult = p.mult;
+                        add.isOne = p.isOne;
+                        add.isLone = p.isLone;
+                        add.isSome = p.isSome;
+                        add.abstract = p.abstract;
+                        add.isAbstract = p.isAbstract;
+                        add.var = p.var;
+                        add.isVar = p.isVar;
+                        if (!add.$cstNode) add.$cstNode = p.$cstNode;
+                        
                         processSig(add);
                     }
                 }
@@ -339,8 +352,16 @@ export function extractFieldMetrics(ctx: ExtractionContext): Partial<ModelCharac
                 if (p.fields && p.fields.length > 0) {
                     sigWithFieldCount++;
                     for (const f of p.fields) {
-                        fieldCount++;
-                        if ((f as any).var || (f as any).isVar) varFieldCount++;
+                        let count = 1;
+                        if (f.decl && f.decl.additionalNames) {
+                            count += f.decl.additionalNames.length;
+                        }
+                        fieldCount += count;
+                        
+                        const fPrefix = f.$cstNode?.text.substring(0, 10) || '';
+                        if ((f as any).var || (f as any).isVar || fPrefix.includes('var')) {
+                            varFieldCount += count;
+                        }
                     }
                 }
             }
@@ -481,8 +502,12 @@ export function extractTemporalAndVarMetrics(ctx: ExtractionContext): Partial<Mo
 
         if (type === 'BinaryTemporalExpr') {
             temporalOperatorCount++;
-        } else if (type === 'UnaryLogicalExpr' && typeof node.op === 'string' && TEMPORAL_KEYWORDS.has(node.op)) {
-            temporalOperatorCount++;
+        } else if (type === 'UnaryLogicalExpr') {
+            let nodeText = node.$cstNode?.text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n\r]*|--[^\n\r]*/g, '').trim() || '';
+            let prefix = nodeText.split(/[\s(]+/)[0];
+            if (TEMPORAL_KEYWORDS.has(prefix) || (typeof node.op === 'string' && TEMPORAL_KEYWORDS.has(node.op))) {
+                temporalOperatorCount++;
+            }
         }
 
         for (const k in node) {
@@ -532,16 +557,29 @@ export function extractOtherExprMetrics(ctx: ExtractionContext): Partial<ModelCh
         visited.add(node);
 
         const type = node.$type;
+        
+        let nodeText = '';
+        if (node.$cstNode) {
+            nodeText = node.$cstNode.text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n\r]*|--[^\n\r]*/g, '').trim();
+        }
+
         if (type === 'CardinalityExpr' || node.op === '#') {
             setCardinalityCount++;
         }
 
-        if (type === 'UnaryExpr' && (node.op === '^' || node.op === '*')) {
+        if (type === 'UnaryExpr' && (nodeText.startsWith('^') || nodeText.startsWith('*') || node.op === '^' || node.op === '*')) {
             transitiveClosureCount++;
         }
 
-        if (type === 'DotJoinExpr' && (node.op === '.^' || node.op === '.*')) {
-            transitiveClosureCount++;
+        if (type === 'DotJoinExpr') {
+            let remaining = nodeText;
+            if (node.left && node.left.$cstNode && node.$cstNode) {
+                remaining = node.$cstNode.text.substring(node.left.$cstNode.text.length)
+                    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\n\r]*|--[^\n\r]*/g, '').trim();
+            }
+            if (remaining.startsWith('.^') || remaining.startsWith('.*') || node.op === '.^' || node.op === '.*') {
+                transitiveClosureCount++;
+            }
         }
 
         for (const k in node) {
@@ -596,8 +634,12 @@ export function extractStructuralMetrics(ctx: ExtractionContext): Partial<ModelC
         }
 
         let isTemp = type === 'BinaryTemporalExpr';
-        if (type === 'UnaryLogicalExpr' && typeof node.op === 'string' && TEMPORAL_KEYWORDS.has(node.op)) {
-            isTemp = true;
+        if (type === 'UnaryLogicalExpr') {
+            let nodeText = node.$cstNode?.text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n\r]*|--[^\n\r]*/g, '').trim() || '';
+            let prefix = nodeText.split(/[\s(]+/)[0];
+            if (TEMPORAL_KEYWORDS.has(prefix) || (typeof node.op === 'string' && TEMPORAL_KEYWORDS.has(node.op))) {
+                isTemp = true;
+            }
         }
         if (isTemp) {
             currTempN++;
