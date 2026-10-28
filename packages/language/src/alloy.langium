@@ -12,7 +12,7 @@ ModuleParam:
     exactly?='exactly'? name=ID;
 
 Import:
-    'private'? 'open' qualName=ModulePath ('[' aliases+=ModulePath (',' aliases+=ModulePath)*']')? ('as' alias=ID)?;
+    private?='private'? 'open' qualName=ModulePath ('[' aliases+=ModulePath (',' aliases+=ModulePath)*']')? ('as' alias=ID)?;
 
 Paragraph:
     SigDecl | FactDecl | PredDecl | FunDecl | AssertDecl | CmdDecl | EnumDecl | MacroDecl;
@@ -24,7 +24,7 @@ MacroParam:
     name=ID;
 
 SigDecl:
-    'private'? 'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
+    private?='private'? var?='var'? abstract?='abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
     '{' (fields+=FieldDecl (',' fields+=FieldDecl)* ','?)? '}' block=Block?;
 
 AdditionalSig:
@@ -34,10 +34,10 @@ SigExt:
     keyword=('extends' | 'in') parent=QualName ('+' additionalParents+=QualName)*;
 
 FieldDecl:
-    'var'? decl=Decl;
+    var?='var'? decl=Decl;
 
 Decl:
-    'disj'? names+=DeclName (',' names+=DeclName)* ':' 'disj'? expr=Expr;
+    disj?='disj'? names+=DeclName (',' names+=DeclName)* ':' disjExpr?='disj'? expr=Expr;
 
 DeclName:
     name=ID;
@@ -49,7 +49,7 @@ PredDecl:
     'pred' (qualifier=QualName '.')? name=ID paraDecls=ParaDecls? block=Block;
 
 FunDecl:
-    'private'? 'fun' (qualifier=QualName '.')? name=ID paraDecls=ParaDecls? ':' 
+    private?='private'? 'fun' (qualifier=QualName '.')? name=ID paraDecls=ParaDecls? ':' 
     (mult=MULT | multSet='set')? retType=ReturnTypeExpr '{' body=Expr '}';
 
 ParaDecls:
@@ -59,7 +59,7 @@ AssertDecl:
     'assert' name=ID? block=Block;
 
 EnumDecl:
-    'private'? 'enum' name=ID '{' values+=EnumValue (',' values+=EnumValue)* '}';
+    private?='private'? 'enum' name=ID '{' values+=EnumValue (',' values+=EnumValue)* '}';
 
 EnumValue:
     name=ID;
@@ -75,7 +75,7 @@ Scope:
     | 'for' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*;
 
 TypeScope:
-    'exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? type=QualName;
+    exactly?='exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? type=QualName;
 
 
 Expr:
@@ -99,17 +99,17 @@ ImplicationExpr infers Expr:
     BinaryTemporalExpr ({infer ImplicationExpr.left=current} ('=>' | 'implies') right=BinaryTemporalExpr ('else' elseExpr=ImplicationExpr)?)?;
 
 BinaryTemporalExpr infers Expr:
-    ConjunctionExpr ({infer BinaryTemporalExpr.left=current} ('until' | 'releases' | 'since' | 'triggered') right=ConjunctionExpr)*;
+    ConjunctionExpr ({infer BinaryTemporalExpr.left=current} op=('until' | 'releases' | 'since' | 'triggered') right=ConjunctionExpr)*;
 
 ConjunctionExpr infers Expr:
     UnaryLogicalExpr ({infer ConjunctionExpr.left=current} ('&&' | 'and') right=UnaryLogicalExpr)*;
 
 UnaryLogicalExpr infers Expr:
-    ({infer UnaryLogicalExpr} ('!' | 'not' | 'always' | 'eventually' | 'after' | 'before' | 'historically' | 'once') expr=UnaryLogicalExpr)
+    ({infer UnaryLogicalExpr} op=('!' | 'not' | 'always' | 'eventually' | 'after' | 'before' | 'historically' | 'once') expr=UnaryLogicalExpr)
     | UnaryMultExpr;
 
 UnaryMultExpr infers Expr:
-    ({infer UnaryMultExpr} ('no' | 'lone' | 'one' | 'some' | 'set') expr=UnaryMultExpr)
+    ({infer UnaryMultExpr} op=('no' | 'lone' | 'one' | 'some' | 'set') expr=UnaryMultExpr)
     | ComparisonExpr;
 
 ComparisonExpr infers Expr:
@@ -117,12 +117,12 @@ ComparisonExpr infers Expr:
 
 UnionDiffExpr infers Expr:
     CardinalityExpr (
-        {infer UnionDiffExpr.left=current} ('+' | '-') right=CardinalityExpr
+        {infer UnionDiffExpr.left=current} op=('+' | '-') right=CardinalityExpr
         | {infer BuiltinMathExpr.left=current} 'fun' '/' op=ID right=CardinalityExpr
     )*;
 
 CardinalityExpr infers Expr:
-    ({infer CardinalityExpr} ('#' | 'int') expr=CardinalityExpr)
+    ({infer CardinalityExpr} op=('#' | 'int') expr=CardinalityExpr)
     | OverrideExpr;
 
 OverrideExpr infers Expr:
@@ -135,10 +135,10 @@ ArrowExpr infers Expr:
     RestrictionExpr ({infer ArrowExpr.left=current} arrows+=ArrowOp right=RestrictionExpr)*;
 
 RestrictionExpr infers Expr:
-    DotJoinExpr ({infer RestrictionExpr.left=current} ('<:' | ':>') right=DotJoinExpr)*;
+    DotJoinExpr ({infer RestrictionExpr.left=current} op=('<:' | ':>') right=DotJoinExpr)*;
 
 DotJoinExpr infers Expr:
-    BoxJoinExpr ({infer DotJoinExpr.left=current} ('.' | '.*' | '.^' | '.~') right=BoxJoinExpr)*;
+    BoxJoinExpr ({infer DotJoinExpr.left=current} op=('.' | '.*' | '.^' | '.~') right=BoxJoinExpr)*;
 
 BoxJoinExpr infers Expr:
     PrimitiveExpr (
@@ -152,7 +152,7 @@ PrimeExpr infers Expr:
     UnaryExpr ({infer PrimeExpr.left=current} PRIME)*;
 
 UnaryExpr infers Expr:
-    ({infer UnaryExpr} ('~' | '^' | '*') expr=UnaryExpr)
+    ({infer UnaryExpr} op=('~' | '^' | '*') expr=UnaryExpr)
     | PrimaryExpr;
 
 PrimaryExpr infers Expr:
@@ -164,17 +164,17 @@ PrimaryExpr infers Expr:
     | Block
     | ({infer SetExpr} '{' decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar '}')
     | ({infer LetExpr} 'let' decls+=LetDecl (',' decls+=LetDecl)* blockOrBar=BlockOrBar)
-    | ({infer QuantExpr} QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
+    | ({infer QuantExpr} quant=QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
     | ({infer MetaExpr} qualName=QualName '$')  
-    | STRING  
+    | ({infer StringLiteral} value=STRING)
     ;
 
 
 QualName:
-    ('this/')? (names+=NameOrKeyword'/')* ref=[NamedElement:IDOrBuiltin];
+    (thisModule?='this' '/')? (names+=NameOrKeyword'/')* ref=[NamedElement:IDOrBuiltin];
 
 ModulePath:
-    ('this/')? (names+=NameOrKeyword'/')* name=ID;
+    (names+=NameOrKeyword'/')* name=ID;
 
 // Allows keywords to appear as namespace prefixes in qualified names (e.g., fun/add, pred/totalOrder, seq/Int)
 NameOrKeyword returns string:
