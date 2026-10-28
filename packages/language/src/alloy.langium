@@ -1,6 +1,6 @@
 grammar Alloy
 
-type NamedElement = SigDecl | AdditionalSig | PredDecl | FunDecl | FactDecl | AssertDecl | FieldDecl | LetDecl | Decl | EnumDecl | MacroDecl | ModuleParam
+type NamedElement = SigDecl | AdditionalSig | PredDecl | FunDecl | FactDecl | AssertDecl | DeclName | LetDecl | EnumDecl | EnumValue | MacroDecl | MacroParam | ModuleParam;
 
 entry AlloyModule:
     ModuleDecl? import+=Import* paragraph+=Paragraph*;
@@ -18,7 +18,10 @@ Paragraph:
     SigDecl | FactDecl | PredDecl | FunDecl | AssertDecl | CmdDecl | EnumDecl | MacroDecl;
 
 MacroDecl:
-    'let' name=ID ('[' params+=ID (',' params+=ID)* ']')? '='? expr=Expr;
+    'let' name=ID ('[' params+=MacroParam (',' params+=MacroParam)* ']')? '='? expr=Expr;
+
+MacroParam:
+    name=ID;
 
 SigDecl:
     'private'? 'var'? 'abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
@@ -34,7 +37,10 @@ FieldDecl:
     'var'? decl=Decl;
 
 Decl:
-    'disj'? name=QualDeclName (',' additionalNames+=QualDeclName)* ':' 'disj'? expr=Expr;
+    'disj'? names+=DeclName (',' names+=DeclName)* ':' 'disj'? expr=Expr;
+
+DeclName:
+    name=ID;
 
 FactDecl:
     'fact' name=ID? block=Block;
@@ -53,7 +59,10 @@ AssertDecl:
     'assert' name=ID? block=Block;
 
 EnumDecl:
-    'private'? 'enum' name=ID '{' values+=ID (',' values+=ID)* '}';
+    'private'? 'enum' name=ID '{' values+=EnumValue (',' values+=EnumValue)* '}';
+
+EnumValue:
+    name=ID;
 
 CmdDecl:
     (name=ID ':')? (kind='run' | kind='check') 
@@ -163,9 +172,6 @@ PrimaryExpr infers Expr:
 
 QualName:
     ('this/')? (names+=NameOrKeyword'/')* ref=[NamedElement:IDOrBuiltin];
-
-QualDeclName:
-    ('this/')? (names+=NameOrKeyword'/')* name=ID;
 
 ModulePath:
     ('this/')? (names+=NameOrKeyword'/')* name=ID;
