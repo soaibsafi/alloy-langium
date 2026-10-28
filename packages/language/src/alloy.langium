@@ -12,13 +12,15 @@ ModuleParam:
     exactly?='exactly'? name=ID;
 
 Import:
-    private?='private'? 'open' qualName=ModulePath ('[' aliases+=ModulePath (',' aliases+=ModulePath)*']')? ('as' alias=ID)?;
+    private?='private'? 'open' qualName=ModulePath ('[' (args+=QualName (',' args+=QualName)*)? ']')? ('as' alias=ID)?;
 
 Paragraph:
     SigDecl | FactDecl | PredDecl | FunDecl | AssertDecl | CmdDecl | EnumDecl | MacroDecl;
 
 MacroDecl:
-    'let' name=ID ('[' params+=MacroParam (',' params+=MacroParam)* ']')? '='? expr=Expr;
+    private?='private'? 'let' name=ID
+    ('(' (params+=MacroParam (',' params+=MacroParam)*)? ')' | '[' (params+=MacroParam (',' params+=MacroParam)*)? ']')?
+    ('=' expr=Expr | expr=Block);
 
 MacroParam:
     name=ID;
@@ -54,23 +56,22 @@ DeclName:
     name=ID;
 
 FactDecl:
-    'fact' name=ID? block=Block;
+    'fact' name=(ID | STRING)? block=Block;
 
 PredDecl:
-    'pred' (qualifier=QualName '.')? name=ID paraDecls=ParaDecls? block=Block;
+    private?='private'? 'pred' (qualifier=QualName '.')? name=ID paraDecls=ParaDecls? block=Block;
 
 FunDecl:
-    private?='private'? 'fun' (qualifier=QualName '.')? name=ID paraDecls=ParaDecls? ':' 
-    (mult=MULT | multSet='set')? retType=ReturnTypeExpr '{' body=Expr '}';
+    private?='private'? 'fun' (qualifier=QualName '.')? name=ID paraDecls=ParaDecls? ':' returnType=Expr block=Block;
 
 ParaDecls:
     '(' (decls+=Decl (',' decls+=Decl)*)? ')' | '[' (decls+=Decl (',' decls+=Decl)*)? ']';
 
 AssertDecl:
-    'assert' name=ID? block=Block;
+    'assert' name=(ID | STRING)? block=Block;
 
 EnumDecl:
-    private?='private'? 'enum' name=ID '{' values+=EnumValue (',' values+=EnumValue)* '}';
+    private?='private'? 'enum' name=ID '{' (values+=EnumValue (',' values+=EnumValue)*)? '}';
 
 EnumValue:
     name=ID;
@@ -97,11 +98,6 @@ TypeScope:
 
 Expr:
     SequenceExpr;
-
-// Return type expression - used in FunDecl to avoid ambiguity with multiplicity keywords
-// This skips the multiplicity prefixes (lone, some, one, set), which FunDecl handles separately
-ReturnTypeExpr infers Expr:
-    ShiftExpr;
 
 // a ; b  means  a and after b  (right associative)
 SequenceExpr infers Expr:
