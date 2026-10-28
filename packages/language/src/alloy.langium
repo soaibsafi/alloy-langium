@@ -1,12 +1,14 @@
 grammar Alloy
 
+// Reference: org.alloytools.alloy.core/parser/Alloy.cup, Alloy.lex and CompFilter.java
+
 type NamedElement = SigDecl | AdditionalSig | PredDecl | FunDecl | FactDecl | AssertDecl | DeclName | LetDecl | EnumDecl | EnumValue | MacroDecl | MacroParam | ModuleParam;
 
 entry AlloyModule:
     ModuleDecl? import+=Import* paragraph+=Paragraph*;
 
 ModuleDecl:
-    'module' qualName=ModulePath ('[' params+=ModuleParam (',' params+=ModuleParam)* ']')?; 
+    'module' qualName=ModulePath ('[' params+=ModuleParam (',' params+=ModuleParam)* ']')?;
 
 ModuleParam:
     exactly?='exactly'? name=ID;
@@ -76,18 +78,21 @@ EnumDecl:
 EnumValue:
     name=ID;
 
+// "l: run p" names the command l; "l: run n {...}" is not valid Alloy.
 CmdDecl:
-    (name=ID ':')? (kind='run' | kind='check') 
-    (name=ID block=Block | block=Block | predicate=QualName)? 
-    scope=Scope? 
-    ('expect' expectNum=INT)? ('=>' chainedCmd=CmdDecl)?;
+    (name=CMD_LABEL kind=('run' | 'check') (block=Block | predicate=QualName)
+    | kind=('run' | 'check') (name=ID? block=Block | predicate=QualName))
+    scope=Scope?
+    ('expect' expectNum=INT)? (('=>' | 'implies') chainedCmd=CmdDecl)?;
 
 Scope:
-    'for' number=INT ('but' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*)? 
+    'for' number=INT ('but' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*)?
     | 'for' typeScopes+=TypeScope (',' typeScopes+=TypeScope)*;
 
+// n | n..m | n.. | n..m:i | n:i  (an open range has range=true and no endNumber)
 TypeScope:
-    exactly?='exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? type=QualName;
+    exactly?='exactly'? number=INT (range?='..' (endNumber=INT (':' stepNumber=INT)?)? | ':' stepNumber=INT)?
+    (type=QualName | seq?='seq');
 
 
 // ---------------------------------------------------------------------------
@@ -241,6 +246,8 @@ terminal INT_ADD_SUB: /fun\/(add|sub)\b/;
 terminal INT_MUL_DIV_REM: /fun\/(mul|div|rem)\b/;
 terminal INT_CONST: /fun\/(min|max|next)\b/;
 terminal TOTAL_ORDER: /pred\/totalOrder\b/;
+// A command label "l:" is one token, as in CompFilter.java; otherwise "for 3 l: run p" reads "3 l" as a type scope
+terminal CMD_LABEL: /[a-zA-Z_\u00C0-\u1FFF\u2C00-\uD7FF][\w"\u00C0-\u1FFF\u2C00-\uD7FF]*\s*:(?=\s*(run|check)\b)/;
 // Letters include non-ASCII ranges, skipping General Punctuation (U+2000-206F) where the typographic primes live
 terminal ID: /[a-zA-Z_\u00C0-\u1FFF\u2C00-\uD7FF][\w"\u00C0-\u1FFF\u2C00-\uD7FF]*/;
 terminal HEX_INT returns number: /0x[0-9A-Fa-f_]+/;
