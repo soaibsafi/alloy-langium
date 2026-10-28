@@ -16,7 +16,8 @@
     "devDependencies": {
         "@types/node": "~20.17.48",
         "shx": "~0.4.0",
-        "typescript": "~5.8.3"
+        "typescript": "~5.8.3",
+        "vitest": "^4.1.12"
     },
     "volta": {
         "node": "20.19.2",
