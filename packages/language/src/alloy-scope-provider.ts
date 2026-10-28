@@ -71,7 +71,7 @@ export class AlloyScopeProvider extends DefaultScopeProvider {
         // Add built-in Alloy 6 keywords and standard library functions that act as types/names
         const document = AstUtils.getDocument(context.container);
         if (document) {
-            const builtins = ['steps', 'Int', 'int', 'String', 'totalOrder', 'seq', 'none', 'univ', 'iden', 'abs', 'plus', 'minus', 'mul', 'div', 'rem', 'add', 'sub', 'sum', 'max', 'min'];
+            const builtins = ['steps', 'Int', 'int', 'String', 'totalOrder', 'seq', 'none', 'univ', 'iden', 'disj', 'abs', 'plus', 'minus', 'mul', 'div', 'rem', 'add', 'sub', 'sum', 'max', 'min'];
             for (const builtin of builtins) {
                 elements.push({
                     name: builtin,

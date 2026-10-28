@@ -90,7 +90,7 @@ Expr:
 // Return type expression - used in FunDecl to avoid ambiguity with multiplicity keywords
 // This skips the multiplicity prefixes (lone, some, one, set), which FunDecl handles separately
 ReturnTypeExpr infers Expr:
-    UnionDiffExpr;
+    ShiftExpr;
 
 // a ; b  means  a and after b  (right associative)
 SequenceExpr infers Expr:
@@ -118,17 +118,20 @@ UnaryLogicalExpr infers Expr:
 
 // Multiplicity prefixes share the comparison level: "no a = b" is "(no a) = b".
 ComparisonExpr infers Expr:
-    ({infer UnaryMultExpr} op=('no' | 'some' | 'lone' | 'one' | 'set') expr=UnionDiffExpr | UnionDiffExpr)
-    ({infer ComparisonExpr.left=current} op=CompareOp right=UnionDiffExpr)*;
+    ({infer UnaryMultExpr} op=('no' | 'some' | 'lone' | 'one' | 'set' | 'seq') expr=ShiftExpr | ShiftExpr)
+    ({infer ComparisonExpr.left=current} negated?=('!' | 'not')? op=CompareOp right=ShiftExpr)*;
+
+ShiftExpr infers Expr:
+    UnionDiffExpr ({infer ShiftExpr.left=current} op=('<<' | '>>' | '>>>') right=UnionDiffExpr)*;
 
 UnionDiffExpr infers Expr:
-    CardinalityExpr (
-        {infer UnionDiffExpr.left=current} op=('+' | '-') right=CardinalityExpr
-        | {infer BuiltinMathExpr.left=current} 'fun' '/' op=ID right=CardinalityExpr
-    )*;
+    MulExpr ({infer UnionDiffExpr.left=current} op=('+' | '-' | INT_ADD_SUB) right=MulExpr)*;
+
+MulExpr infers Expr:
+    CardinalityExpr ({infer MulExpr.left=current} op=INT_MUL_DIV_REM right=CardinalityExpr)*;
 
 CardinalityExpr infers Expr:
-    ({infer CardinalityExpr} op=('#' | 'int') expr=CardinalityExpr)
+    {infer CardinalityExpr} op=('#' | 'sum' | 'int') expr=CardinalityExpr
     | OverrideExpr;
 
 OverrideExpr infers Expr:
@@ -151,8 +154,8 @@ RangeRestrictionExpr infers Expr:
 // "a.*b" is a dot join with "*b", as in Alloy.
 JoinExpr infers Expr:
     PrimeExpr (
-        {infer DotJoinExpr.left=current} '.' right=PrimeExpr
-        | {infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']'
+        {infer DotJoinExpr.left=current} ('.' | '::') right=PrimeExpr
+        | {infer BoxJoinExpr.left=current} '[' (indices+=Expr (',' indices+=Expr)*)? ']'
     )*;
 
 PrimeExpr infers Expr:
@@ -163,36 +166,36 @@ UnaryExpr infers Expr:
     | PrimaryExpr;
 
 PrimaryExpr infers Expr:
-    Const 
-    | QualName 
-    | ({infer AtExpr} '@' ref=[NamedElement:ID])
-    | ({infer ThisExpr} 'this')
-    | ({infer ParenExpr} '(' expr=Expr ')')
+    Const
+    | QualName
+    | {infer AtExpr} '@' ref=[NamedElement:ID]
+    | {infer ThisExpr} 'this'
+    | {infer ParenExpr} '(' expr=Expr ')'
     | Block
-    | ({infer SetExpr} '{' decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar '}')
-    | ({infer LetExpr} 'let' decls+=LetDecl (',' decls+=LetDecl)* blockOrBar=BlockOrBar)
-    | ({infer QuantExpr} quant=QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar)
-    | ({infer MetaExpr} qualName=QualName '$')  
-    | ({infer StringLiteral} value=STRING)
-    ;
+    | {infer SetExpr} '{' decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar? '}'
+    | {infer LetExpr} 'let' decls+=LetDecl (',' decls+=LetDecl)* blockOrBar=BlockOrBar
+    | {infer QuantExpr} quant=QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar
+    | {infer MetaExpr} qualName=QualName '$'
+    | {infer BuiltinExpr} name=(INT_CONST | TOTAL_ORDER)
+    | {infer StringLiteral} value=STRING;
 
 
 QualName:
-    (thisModule?='this' '/')? (names+=NameOrKeyword'/')* ref=[NamedElement:IDOrBuiltin];
+    (thisModule?='this' '/')? (names+=NameOrKeyword '/')* ref=[NamedElement:IDOrBuiltin];
 
 ModulePath:
-    (names+=NameOrKeyword'/')* name=ID;
+    (names+=NameOrKeyword '/')* name=ID;
 
-// Allows keywords to appear as namespace prefixes in qualified names (e.g., fun/add, pred/totalOrder, seq/Int)
+// Keywords that may appear as namespace prefixes in qualified names (e.g. seq/Int)
 NameOrKeyword returns string:
-    ID | 'fun' | 'pred' | 'Int' | 'int' | 'none' | 'univ' | 'iden';
+    ID | 'seq' | 'Int' | 'int' | 'none' | 'univ' | 'iden';
 
-// The final segment of a QualName can be an ID or a built-in type, but NOT a declaration keyword like 'pred' or 'fun'.
+// The final segment of a QualName can be an ID or a built-in name.
 IDOrBuiltin returns string:
-    ID | 'Int' | 'int' | 'none' | 'univ' | 'iden' | 'String';
+    ID | 'Int' | 'int' | 'none' | 'univ' | 'iden' | 'String' | 'steps' | 'disj' | 'sum';
 
 Const:
-    '-'? number=(INT | HEX_INT | BIN_INT);
+    number=(INT | HEX_INT | BIN_INT);
 
 ArrowOp:
     leftMult=LONE_ARROW (rightMult=MULT | rightSet='set')?
@@ -208,26 +211,29 @@ Block:
     '{' statements+=BlockStatement* '}';
 
 BlockStatement:
-    expr=Expr ';'?;
+    expr=Expr;
 
 BlockOrBar:
     block=Block | '|' expr=Expr;
 
 CompareOp returns string:
-    'in' | '=' | '<' | '>' | '=<' | '>=' | '<=' | NOT_IN | NOT_EQ | 'not' 'in';
+    'in' | '=' | '<' | '>' | '=<' | '<=' | '>=';
 
 QUANT returns string: 'all' | 'no' | 'sum' | 'some' | 'lone' | 'one';
 
 MULT returns string: 'lone' | 'some' | 'one';
 
-terminal PRIME: /['\u2018\u2019]/;
 hidden terminal WS: /\s+/;
-terminal NOT_EQ: /!=/;
-terminal NOT_IN: /!in\b/;
+terminal PRIME: /['\u2018\u2019]/;
 terminal LONE_ARROW: /lone\s*->/;
 terminal SOME_ARROW: /some\s*->/;
 terminal ONE_ARROW: /one\s*->/;
 terminal SET_ARROW: /set\s*->/;
+// fun/add etc. are single tokens in Alloy (see CompFilter.java)
+terminal INT_ADD_SUB: /fun\/(add|sub)\b/;
+terminal INT_MUL_DIV_REM: /fun\/(mul|div|rem)\b/;
+terminal INT_CONST: /fun\/(min|max|next)\b/;
+terminal TOTAL_ORDER: /pred\/totalOrder\b/;
 // Letters include non-ASCII ranges, skipping General Punctuation (U+2000-206F) where the typographic primes live
 terminal ID: /[a-zA-Z_\u00C0-\u1FFF\u2C00-\uD7FF][\w"\u00C0-\u1FFF\u2C00-\uD7FF]*/;
 terminal HEX_INT returns number: /0x[0-9A-Fa-f_]+/;
@@ -238,4 +244,3 @@ terminal STRING: /"([^"\\\r\n]|\\.)*"/;
 hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
 hidden terminal SL_COMMENT_SLASH: /\/\/[^\n\r]*/;
 hidden terminal SL_COMMENT_DASH: /--[^\n\r]*/;
-
