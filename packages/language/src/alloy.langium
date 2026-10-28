@@ -78,16 +78,23 @@ TypeScope:
     exactly?='exactly'? number=INT ('..' (endNumber=INT (':' stepNumber=INT)?)?)? type=QualName;
 
 
+// ---------------------------------------------------------------------------
+// Expressions, from lowest to highest precedence (mirrors Alloy.cup).
+// Quantifiers and let are primary expressions whose body extends as far right
+// as possible, which matches Alloy's "Bind" productions.
+// ---------------------------------------------------------------------------
+
 Expr:
     SequenceExpr;
 
 // Return type expression - used in FunDecl to avoid ambiguity with multiplicity keywords
-// This skips UnaryMultExpr since mult keywords (lone, some, one, set) are handled separately
+// This skips the multiplicity prefixes (lone, some, one, set), which FunDecl handles separately
 ReturnTypeExpr infers Expr:
-    ComparisonExpr;
+    UnionDiffExpr;
 
+// a ; b  means  a and after b  (right associative)
 SequenceExpr infers Expr:
-    DisjunctionExpr ({infer SequenceExpr.left=current} ';' right=DisjunctionExpr)*;
+    DisjunctionExpr ({infer SequenceExpr.left=current} ';' right=SequenceExpr)?;
 
 DisjunctionExpr infers Expr:
     BiImplicationExpr ({infer DisjunctionExpr.left=current} ('||' | 'or') right=BiImplicationExpr)*;
@@ -95,25 +102,24 @@ DisjunctionExpr infers Expr:
 BiImplicationExpr infers Expr:
     ImplicationExpr ({infer BiImplicationExpr.left=current} ('<=>' | 'iff') right=ImplicationExpr)*;
 
+// Right associative; a dangling else binds to the nearest implication.
 ImplicationExpr infers Expr:
-    BinaryTemporalExpr ({infer ImplicationExpr.left=current} ('=>' | 'implies') right=BinaryTemporalExpr ('else' elseExpr=ImplicationExpr)?)?;
-
-BinaryTemporalExpr infers Expr:
-    ConjunctionExpr ({infer BinaryTemporalExpr.left=current} op=('until' | 'releases' | 'since' | 'triggered') right=ConjunctionExpr)*;
+    ConjunctionExpr ({infer ImplicationExpr.left=current} ('=>' | 'implies') right=ImplicationExpr ('else' elseExpr=ImplicationExpr)?)?;
 
 ConjunctionExpr infers Expr:
-    UnaryLogicalExpr ({infer ConjunctionExpr.left=current} ('&&' | 'and') right=UnaryLogicalExpr)*;
+    BinaryTemporalExpr ({infer ConjunctionExpr.left=current} ('&&' | 'and') right=BinaryTemporalExpr)*;
+
+BinaryTemporalExpr infers Expr:
+    UnaryLogicalExpr ({infer BinaryTemporalExpr.left=current} op=('until' | 'releases' | 'since' | 'triggered') right=UnaryLogicalExpr)*;
 
 UnaryLogicalExpr infers Expr:
-    ({infer UnaryLogicalExpr} op=('!' | 'not' | 'always' | 'eventually' | 'after' | 'before' | 'historically' | 'once') expr=UnaryLogicalExpr)
-    | UnaryMultExpr;
-
-UnaryMultExpr infers Expr:
-    ({infer UnaryMultExpr} op=('no' | 'lone' | 'one' | 'some' | 'set') expr=UnaryMultExpr)
+    {infer UnaryLogicalExpr} op=('!' | 'not' | 'always' | 'eventually' | 'after' | 'before' | 'historically' | 'once') expr=UnaryLogicalExpr
     | ComparisonExpr;
 
+// Multiplicity prefixes share the comparison level: "no a = b" is "(no a) = b".
 ComparisonExpr infers Expr:
-    UnionDiffExpr ({infer ComparisonExpr.left=current} op=CompareOp right=UnionDiffExpr)?;
+    ({infer UnaryMultExpr} op=('no' | 'some' | 'lone' | 'one' | 'set') expr=UnionDiffExpr | UnionDiffExpr)
+    ({infer ComparisonExpr.left=current} op=CompareOp right=UnionDiffExpr)*;
 
 UnionDiffExpr infers Expr:
     CardinalityExpr (
@@ -131,28 +137,29 @@ OverrideExpr infers Expr:
 IntersectionExpr infers Expr:
     ArrowExpr ({infer IntersectionExpr.left=current} '&' right=ArrowExpr)*;
 
+// Right associative: "A -> one B -> C" is "A -> one (B -> C)".
 ArrowExpr infers Expr:
-    RestrictionExpr ({infer ArrowExpr.left=current} arrows+=ArrowOp right=RestrictionExpr)*;
+    DomainRestrictionExpr ({infer ArrowExpr.left=current} op=ArrowOp right=ArrowExpr)?;
 
-RestrictionExpr infers Expr:
-    DotJoinExpr ({infer RestrictionExpr.left=current} op=('<:' | ':>') right=DotJoinExpr)*;
+DomainRestrictionExpr infers Expr:
+    RangeRestrictionExpr ({infer RestrictionExpr.left=current} op='<:' right=RangeRestrictionExpr)*;
 
-DotJoinExpr infers Expr:
-    BoxJoinExpr ({infer DotJoinExpr.left=current} op=('.' | '.*' | '.^' | '.~') right=BoxJoinExpr)*;
+RangeRestrictionExpr infers Expr:
+    JoinExpr ({infer RestrictionExpr.left=current} op=':>' right=JoinExpr)*;
 
-BoxJoinExpr infers Expr:
-    PrimitiveExpr (
-        {infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']'
+// Dot join and box join share one left-associative level: "a.b[c]" is "(a.b)[c]".
+// "a.*b" is a dot join with "*b", as in Alloy.
+JoinExpr infers Expr:
+    PrimeExpr (
+        {infer DotJoinExpr.left=current} '.' right=PrimeExpr
+        | {infer BoxJoinExpr.left=current} '[' indices+=Expr (',' indices+=Expr)* ']'
     )*;
 
-PrimitiveExpr infers Expr:
-    PrimeExpr;
-
 PrimeExpr infers Expr:
-    UnaryExpr ({infer PrimeExpr.left=current} PRIME)*;
+    UnaryExpr ({infer PrimeExpr.expr=current} PRIME)*;
 
 UnaryExpr infers Expr:
-    ({infer UnaryExpr} op=('~' | '^' | '*') expr=UnaryExpr)
+    {infer UnaryExpr} op=('~' | '^' | '*') expr=UnaryExpr
     | PrimaryExpr;
 
 PrimaryExpr infers Expr:
