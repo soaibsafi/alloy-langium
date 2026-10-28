@@ -207,7 +207,7 @@ QUANT returns string: 'all' | 'no' | 'sum' | 'some' | 'lone' | 'one';
 
 MULT returns string: 'lone' | 'some' | 'one';
 
-terminal PRIME: "'";
+terminal PRIME: /['\u2018\u2019]/;
 hidden terminal WS: /\s+/;
 terminal NOT_EQ: /!=/;
 terminal NOT_IN: /!in\b/;
@@ -215,11 +215,12 @@ terminal LONE_ARROW: /lone\s*->/;
 terminal SOME_ARROW: /some\s*->/;
 terminal ONE_ARROW: /one\s*->/;
 terminal SET_ARROW: /set\s*->/;
-terminal ID: /[_a-zA-Z][\w_\"]*/;
-terminal INT: /\d+/;
-terminal HEX_INT: /0x[0-9A-Fa-f]+/;
-terminal BIN_INT: /0b[01]+/;
-terminal STRING: /"([^"\\]|\\.)*"/;
+// Letters include non-ASCII ranges, skipping General Punctuation (U+2000-206F) where the typographic primes live
+terminal ID: /[a-zA-Z_\u00C0-\u1FFF\u2C00-\uD7FF][\w"\u00C0-\u1FFF\u2C00-\uD7FF]*/;
+terminal HEX_INT returns number: /0x[0-9A-Fa-f_]+/;
+terminal BIN_INT returns number: /0b[01_]+/;
+terminal INT returns number: /[0-9][0-9_]*/;
+terminal STRING: /"([^"\\\r\n]|\\.)*"/;
 
 hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
 hidden terminal SL_COMMENT_SLASH: /\/\/[^\n\r]*/;
