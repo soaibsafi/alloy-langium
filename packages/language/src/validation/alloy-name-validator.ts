@@ -2,6 +2,8 @@ import type { ValidationAcceptor, AstNode } from 'langium';
 import type { AlloyModule, SigDecl, ParaDecls, DeclName } from '../generated/ast.js';
 import type { AlloyServices } from '../alloy-module.js';
 
+const SIG_MULTIPLICITIES = new Set(['lone', 'one', 'some']);
+
 export class AlloyNameValidator {
     constructor(services: AlloyServices) {}
 
@@ -77,6 +79,27 @@ export class AlloyNameValidator {
                     });
                 }
             }
+        }
+    }
+
+    // Alloy accepts sig qualifiers in any order, but each only once and at most one multiplicity.
+    checkSigQualifiers(sig: SigDecl, accept: ValidationAcceptor): void {
+        const seen = new Set<string>();
+        sig.qualifiers.forEach((qualifier, index) => {
+            if (seen.has(qualifier)) {
+                accept('error', 'The same qualifier cannot be specified more than once for the same sig.', {
+                    node: sig,
+                    property: 'qualifiers',
+                    index
+                });
+            }
+            seen.add(qualifier);
+        });
+        if (sig.qualifiers.filter(q => SIG_MULTIPLICITIES.has(q)).length > 1) {
+            accept('error', 'A sig can have at most one multiplicity (lone, one or some).', {
+                node: sig,
+                property: 'qualifiers'
+            });
         }
     }
 

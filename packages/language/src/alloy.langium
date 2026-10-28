@@ -23,20 +23,31 @@ MacroDecl:
 MacroParam:
     name=ID;
 
+// Sig qualifiers may appear in any order; the validator rejects repeated ones.
 SigDecl:
-    private?='private'? var?='var'? abstract?='abstract'? mult=MULT? 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt? 
-    '{' (fields+=FieldDecl (',' fields+=FieldDecl)* ','?)? '}' block=Block?;
+    qualifiers+=SigQualifier* 'sig' name=ID (',' additionalSigs+=AdditionalSig)* sigExt=SigExt?
+    '{' fields+=FieldDecl? (',' fields+=FieldDecl?)* '}' block=Block?;
+
+SigQualifier returns string:
+    'abstract' | 'private' | 'var' | MULT;
 
 AdditionalSig:
     name=ID;
-    
+
+// 'extends' takes a single parent; 'in' and '=' take a union of parents.
 SigExt:
-    keyword=('extends' | 'in') parent=QualName ('+' additionalParents+=QualName)*;
+    keyword='extends' parent=QualName
+    | keyword=('in' | '=') parent=QualName ('+' additionalParents+=QualName)*;
 
 FieldDecl:
-    var?='var'? decl=Decl;
+    var?='var'? private?='private'? decl=Decl;
 
+// A declaration either bounds its names (x: e) or defines them (x = e).
 Decl:
+    disj?='disj'? names+=DeclName (',' names+=DeclName)* (':' disjExpr?='disj'? expr=Expr | defined?='=' expr=Expr);
+
+// Set comprehensions do not allow defined declarations.
+BoundDecl infers Decl:
     disj?='disj'? names+=DeclName (',' names+=DeclName)* ':' disjExpr?='disj'? expr=Expr;
 
 DeclName:
@@ -172,7 +183,7 @@ PrimaryExpr infers Expr:
     | {infer ThisExpr} 'this'
     | {infer ParenExpr} '(' expr=Expr ')'
     | Block
-    | {infer SetExpr} '{' decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar? '}'
+    | {infer SetExpr} '{' decls+=BoundDecl (',' decls+=BoundDecl)* blockOrBar=BlockOrBar? '}'
     | {infer LetExpr} 'let' decls+=LetDecl (',' decls+=LetDecl)* blockOrBar=BlockOrBar
     | {infer QuantExpr} quant=QUANT decls+=Decl (',' decls+=Decl)* blockOrBar=BlockOrBar
     | {infer MetaExpr} qualName=QualName '$'
