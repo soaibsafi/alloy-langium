@@ -248,12 +248,12 @@ describe('linking and validation', () => {
     });
 
     it('accepts builtin names without linking errors', async () => {
-        expect(await diagnostics('sig A {} pred p { disj[A, A] and some A.disj and fun/min < fun/max and pred/totalOrder[A, A, A] and some seq/Int and some steps }')).toEqual([]);
+        expect(await diagnostics('sig A {} pred p { disj[A, A] and A.disj and fun/min < fun/max and pred/totalOrder[A, A, A->A] and some seq/Int and some steps }')).toEqual([]);
     });
 
     it('reports repeated sig qualifiers', async () => {
         expect(await diagnostics('abstract abstract sig A {} sig B {} fact { some A + B }')).toContain('The same qualifier cannot be specified more than once for the same sig.');
-        expect(await diagnostics('one lone sig A {} fact { some A }')).toContain('A sig can have at most one multiplicity (lone, one or some).');
+        expect(await diagnostics('one lone sig A {} fact { some A }')).toContain('You cannot declare a sig to be both lone and one.');
     });
 
     it('still reports duplicate fields and parameters', async () => {

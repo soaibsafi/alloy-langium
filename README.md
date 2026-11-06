@@ -20,6 +20,7 @@ Alloy is a powerful formal modeling language for expressing complex structural a
 - **Langium 4**: Built on modern TypeScript dependency injection, robust AST processing, and high-performance incremental document parsing.
 - **Cross-File Scoping & Linking**: Automatically indexes and resolves module imports across entire workspaces (including standard Alloy library modules like `util/ordering`, `util/relation`, and custom imports).
 - **Semantic Validation & Diagnostics**: Real-time syntax error detection, reference checking, and semantic diagnostics with precise line/column positioning.
+- **Type Checking**: Alloy's relational type system (arity errors, illegal joins, formula/set/integer mismatches, call arity, empty-join warnings) with the Alloy Analyzer's messages, plus hover with types, outline, semantic highlighting, signature help and quick fixes. See [packages/language](packages/language/README.md).
 - **Rich VS Code Integration**: Live status bar metrics, editor title shortcuts, interactive complexity reports, and configurable LSP tracing.
 
 ---
