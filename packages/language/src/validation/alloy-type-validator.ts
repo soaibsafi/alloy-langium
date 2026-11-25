@@ -33,7 +33,7 @@ export class AlloyTypeValidator {
         const used = new Set<AstNode>();
         for (const node of AstUtils.streamAst(module)) {
             if (isQualName(node) || isAtExpr(node)) {
-                const target = node.ref.ref;
+                const target = node.ref?.ref;
                 if (target) used.add(target);
             }
         }
@@ -49,7 +49,7 @@ export class AlloyTypeValidator {
 
     /** "run" needs a predicate or function, "check" an assertion. */
     checkCommand(cmd: CmdDecl, accept: ValidationAcceptor): void {
-        const target = cmd.predicate?.ref.ref;
+        const target = cmd.predicate?.ref?.ref;
         if (cmd.predicate && target) {
             const name = qualifiedText(cmd.predicate);
             if (cmd.kind === 'check' && !isAssertDecl(target)) {
@@ -75,7 +75,7 @@ export class AlloyTypeValidator {
         }
         if (!scope.type) return;
         const name = qualifiedText(scope.type);
-        const target = scope.type.ref.ref;
+        const target = scope.type.ref?.ref;
         if (isBuiltinReference(scope.type)) {
             if (name === 'univ' || name === 'none') {
                 accept('error', `You cannot set a scope on ${name}.`, { node: scope, property: 'type' });

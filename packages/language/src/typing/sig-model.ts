@@ -48,19 +48,19 @@ const BUILTIN_SIGS: Record<string, AlloyType> = {
 
 /** The full name of a reference to a builtin, e.g. "seq/Int". */
 export function qualifiedText(name: QualName): string {
-    return [...name.names, name.ref.$refText].join('/');
+    return [...(name.names ?? []), name.ref?.$refText ?? ''].join('/');
 }
 
 /** True if the reference resolves to nothing or to a builtin (builtins resolve to the module root). */
 export function isBuiltinReference(name: QualName): boolean {
-    const target = name.ref.ref;
+    const target = name.ref?.ref;
     return !target || target.$container === undefined;
 }
 
 /** The path of the module a node belongs to, or undefined for a module without a module declaration. */
 export function modulePathOf(node: AstNode): string | undefined {
     const root = AstUtils.findRootNode(node);
-    return isModuleDecl(root) ? [...root.qualName.names, root.qualName.name].join('/') : undefined;
+    return isModuleDecl(root) && root.qualName ? [...root.qualName.names, root.qualName.name].join('/') : undefined;
 }
 
 /** Returned for a sig that is reached again while its own parents are computed. */
@@ -101,6 +101,7 @@ export class AlloySigModel {
 
     /** The type denoted by a reference used as a sig (sig parents, scopes); undefined if it is not a sig. */
     typeOfSigReference(name: QualName): AlloyType | undefined {
+        if (!name?.ref) return AlloyType.UNKNOWN;
         const target = name.ref.ref;
         if (isBuiltinReference(name)) {
             return target ? BUILTIN_SIGS[qualifiedText(name)] : AlloyType.UNKNOWN;
@@ -145,6 +146,7 @@ export class AlloySigModel {
             }
             let type = AlloyType.EMPTY;
             for (const parentName of [ext.parent, ...ext.additionalParents]) {
+                if (!parentName) continue;
                 const parentType = this.parentType(parentName, node, parents, problems);
                 type = type.isUnknown || parentType.isUnknown ? AlloyType.UNKNOWN : type.merge(parentType);
             }
@@ -152,8 +154,8 @@ export class AlloySigModel {
         }
 
         let parent = UNIV;
-        if (ext) {
-            const target = ext.parent.ref.ref;
+        if (ext?.parent) {
+            const target = ext.parent.ref?.ref;
             const text = qualifiedText(ext.parent);
             if (isBuiltinReference(ext.parent)) {
                 if (target && text !== 'univ') {
@@ -183,7 +185,7 @@ export class AlloySigModel {
     }
 
     protected parentType(name: QualName, node: SigNode, parents: SigNode[], problems: SigProblem[]): AlloyType {
-        const target = name.ref.ref;
+        const target = name.ref?.ref;
         if (isSigNode(target)) {
             parents.push(target);
             const info = this.info(target);

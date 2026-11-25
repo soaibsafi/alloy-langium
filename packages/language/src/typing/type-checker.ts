@@ -60,7 +60,7 @@ const INTEGER_FUNCTIONS = new Set(['plus', 'minus', 'mul', 'div', 'rem', 'add', 
 
 /** Number of parameters of a predicate or function; a receiver (pred A.p) is an implicit first parameter. */
 export function paramCount(callable: Callable): number {
-    return (callable.qualifier ? 1 : 0) + (callable.paraDecls?.decls ?? []).reduce((n, d) => n + d.names.length, 0);
+    return (callable.qualifier ? 1 : 0) + (callable.paraDecls?.decls ?? []).reduce((n, d) => n + (d?.names?.length ?? 0), 0);
 }
 
 /** Alloy's label of a predicate or function, e.g. "pred this/show". */
@@ -101,6 +101,7 @@ export class AlloyTypeChecker {
      * its imports). Alloy resolves such overloaded names by type, so the checker considers them all.
      */
     namesakes(site: QualName | AtExpr): AstNode[] {
+        if (!site.ref) return [];
         const qualifier = isQualName(site) ? site.names.join('/') : '@';
         const key = `${AstUtils.getDocument(site).uri.toString()}|${qualifier}|${site.ref.$refText}`;
         return this.namesakeCache.get(key, () => {
@@ -136,7 +137,8 @@ export class AlloyTypeChecker {
             for (const document of this.documents.all) {
                 const module = document.parseResult.value;
                 if (!isModuleDecl(module)) continue;
-                const path = modulePathOf(module)!;
+                const path = modulePathOf(module);
+                if (!path) continue;
                 map.set(path, [...(map.get(path) ?? []), module]);
             }
             return map;
@@ -145,7 +147,8 @@ export class AlloyTypeChecker {
         const queue = [root];
         while (queue.length > 0) {
             const module = queue.shift()!;
-            for (const open of module.import) {
+            for (const open of module.import ?? []) {
+                if (!open.qualName) continue;
                 for (const target of byPath.get([...open.qualName.names, open.qualName.name].join('/')) ?? []) {
                     if (!seen.has(target)) {
                         seen.add(target);
@@ -196,7 +199,7 @@ class DocumentAnalysis implements TypeAnalysis {
     }
 
     run(): this {
-        for (const paragraph of this.root.paragraph) this.checkParagraph(paragraph);
+        for (const paragraph of this.root?.paragraph ?? []) this.checkParagraph(paragraph);
         return this;
     }
 
@@ -214,7 +217,7 @@ class DocumentAnalysis implements TypeAnalysis {
                 for (const problem of this.sigModel.info(sig).problems) this.report({ ...problem, severity: 'error' });
             }
             for (const field of p.fields) {
-                for (const name of field?.decl.names ?? []) this.declaredType(name);
+                for (const name of field?.decl?.names ?? []) this.declaredType(name);
             }
             if (p.block) this.formulaBlock(p.block);
         } else if (isFactDecl(p) || isAssertDecl(p)) {
@@ -234,18 +237,20 @@ class DocumentAnalysis implements TypeAnalysis {
 
     protected checkParams(callable: Callable): void {
         for (const decl of callable.paraDecls?.decls ?? []) {
-            for (const name of decl.names) this.declaredType(name);
+            for (const name of decl?.names ?? []) this.declaredType(name);
         }
     }
 
     protected checkFunctionBody(fun: FunDecl): void {
         const returnType = this.declaredType(fun);
-        const statements = fun.block.statements;
+        if (!fun.block) return;
+        const statements = fun.block.statements ?? [];
         if (statements.length !== 1) {
             this.formulaBlock(fun.block);
             this.error(fun.block, `This must be a set or relation.\nInstead, it has the following possible type(s):\n${this.format(AlloyType.FORMULA)}`);
             return;
         }
+        if (!statements[0]?.expr) return;
         const body = this.asSet(statements[0].expr);
         if (!body.isUnknown && !returnType.isUnknown && returnType.hasTuple() && body.hasTuple() && !body.intersects(returnType)) {
             this.warning(statements[0].expr, 'Function return value is disjoint from its return type.\n'
@@ -253,8 +258,10 @@ class DocumentAnalysis implements TypeAnalysis {
         }
     }
 
-    protected formulaBlock(block: Block): void {
-        for (const statement of block.statements) this.asFormula(statement.expr);
+    protected formulaBlock(block: Block | undefined): void {
+        for (const statement of block?.statements ?? []) {
+            if (statement?.expr) this.asFormula(statement.expr);
+        }
     }
 
     /******************************************************************************
@@ -286,15 +293,16 @@ class DocumentAnalysis implements TypeAnalysis {
             }
             return bound;
         }
-        if (isLetDecl(node)) return this.typeOf(node.expr);
+        if (isLetDecl(node)) return node.expr ? this.typeOf(node.expr) : AlloyType.UNKNOWN;
         if (isSigNode(node)) return this.sigModel.info(node).type;
         if (isModuleParam(node)) return AlloyType.unary(this.sigModel.paramSig(node));
-        if (isFunDecl(node)) return this.multiplicityBound(node.returnType);
+        if (isFunDecl(node)) return node.returnType ? this.multiplicityBound(node.returnType) : AlloyType.UNKNOWN;
         return AlloyType.UNKNOWN;
     }
 
     /** The type bound by a declaration "x: e" or "x = e" (the same for every name of the declaration). */
     protected boundType(decl: Decl): AlloyType {
+        if (!decl?.expr) return AlloyType.UNKNOWN;
         const cached = this.types.get(decl);
         if (cached) return cached;
         const type = decl.defined ? this.asSet(decl.expr) : this.multiplicityBound(decl.expr);
@@ -303,8 +311,10 @@ class DocumentAnalysis implements TypeAnalysis {
     }
 
     /** Type of a declaration bound, where a top-level set/seq/some/lone/one multiplicity is allowed. */
-    protected multiplicityBound(expr: Expr): AlloyType {
+    protected multiplicityBound(expr: Expr | undefined): AlloyType {
+        if (!expr) return AlloyType.UNKNOWN;
         if (!isUnaryMultExpr(expr) || expr.op === 'no') return this.asSet(expr);
+        if (!expr.expr) return AlloyType.UNKNOWN;
         const cached = this.types.get(expr);
         if (cached) return cached;
         const sub = this.asSet(expr.expr);
@@ -336,7 +346,8 @@ class DocumentAnalysis implements TypeAnalysis {
      * Expressions
      ******************************************************************************/
 
-    typeOf(expr: Expr): AlloyType {
+    typeOf(expr: Expr | undefined): AlloyType {
+        if (!expr) return AlloyType.UNKNOWN;
         const cached = this.types.get(expr);
         if (cached) return cached;
         if (this.inProgress.has(expr)) return AlloyType.UNKNOWN;
@@ -357,7 +368,7 @@ class DocumentAnalysis implements TypeAnalysis {
             if (call) return this.isPartOfLargerCall(e) ? AlloyType.UNKNOWN : this.callType(e, call);
         }
         if (isQualName(e)) return this.referenceType(e);
-        if (isAtExpr(e)) return this.targetType(e.ref.ref, e, false);
+        if (isAtExpr(e)) return this.targetType(e.ref?.ref, e, false);
         if (isThisExpr(e)) return this.thisType(e);
         if (isConst(e)) return AlloyType.SMALL_INT;
         if (isStringLiteral(e)) return AlloyType.unary(STRING);
@@ -442,10 +453,10 @@ class DocumentAnalysis implements TypeAnalysis {
         if (isDotJoinExpr(e)) return this.dotJoinType(e.left, e.right, e);
         if (isBoxJoinExpr(e)) return this.boxJoinType(e);
         if (isQuantExpr(e)) {
-            for (const decl of e.decls) this.checkVariableDecl(decl, e.quant === 'sum');
+            for (const decl of e.decls ?? []) this.checkVariableDecl(decl, e.quant === 'sum');
             if (e.quant === 'sum') {
-                if (e.blockOrBar.expr) this.asInt(e.blockOrBar.expr);
-                else if (e.blockOrBar.block) this.asInt(e.blockOrBar.block);
+                if (e.blockOrBar?.expr) this.asInt(e.blockOrBar.expr);
+                else if (e.blockOrBar?.block) this.asInt(e.blockOrBar.block);
                 return AlloyType.SMALL_INT;
             }
             this.formulaBody(e.blockOrBar);
@@ -453,9 +464,9 @@ class DocumentAnalysis implements TypeAnalysis {
         }
         if (isSetExpr(e)) {
             let type: AlloyType | undefined;
-            for (const decl of e.decls) {
+            for (const decl of e.decls ?? []) {
                 const bound = this.checkVariableDecl(decl, true).extract(1);
-                for (let i = 0; i < decl.names.length; i++) {
+                for (let i = 0; i < (decl?.names?.length ?? 0); i++) {
                     type = type === undefined ? bound : type.isUnknown || bound.isUnknown ? AlloyType.UNKNOWN : type.product(bound);
                 }
             }
@@ -463,19 +474,21 @@ class DocumentAnalysis implements TypeAnalysis {
             return type ?? AlloyType.UNKNOWN;
         }
         if (isLetExpr(e)) {
-            for (const decl of e.decls) this.declaredType(decl);
-            return e.blockOrBar.block ? this.typeOf(e.blockOrBar.block) : this.typeOf(e.blockOrBar.expr!);
+            for (const decl of e.decls ?? []) this.declaredType(decl);
+            return e.blockOrBar?.block ? this.typeOf(e.blockOrBar.block) : this.typeOf(e.blockOrBar?.expr);
         }
         return AlloyType.UNKNOWN;
     }
 
-    protected formulaBody(body: BlockOrBar): void {
+    protected formulaBody(body: BlockOrBar | undefined): void {
+        if (!body) return;
         if (body.block) this.formulaBlock(body.block);
         else if (body.expr) this.asFormula(body.expr);
     }
 
     /** Checks the bound of a quantified or comprehension variable; sum and comprehensions need unary sets. */
     protected checkVariableDecl(decl: Decl, unaryOnly: boolean): AlloyType {
+        if (!decl?.expr) return AlloyType.UNKNOWN;
         const bound = this.boundType(decl);
         if (decl.defined) {
             this.error(decl.expr, 'This cannot be an exactly-of expression.');
@@ -578,7 +591,7 @@ class DocumentAnalysis implements TypeAnalysis {
 
     protected boxJoinType(e: BoxJoinExpr): AlloyType {
         const head = e.left;
-        if (isQualName(head) && isBuiltinReference(head) && head.ref.ref) {
+        if (isQualName(head) && isBuiltinReference(head) && head.ref?.ref) {
             const name = qualifiedText(head);
             if (name === 'disj') return this.disjType(e);
             if (name === 'int' || name === 'sum') {
@@ -633,7 +646,7 @@ class DocumentAnalysis implements TypeAnalysis {
      ******************************************************************************/
 
     protected referenceType(name: QualName): AlloyType {
-        const target = name.ref.ref;
+        const target = name.ref?.ref;
         if (!target) return AlloyType.UNKNOWN;
         if (isBuiltinReference(name)) return BUILTIN_TYPES[qualifiedText(name)]?.() ?? AlloyType.UNKNOWN;
         return this.targetType(target, name, true);
@@ -683,9 +696,9 @@ class DocumentAnalysis implements TypeAnalysis {
     /** Instantiates the parameters of the module declaring `target` with the arguments of the open statement. */
     protected instantiate(type: AlloyType, target: AstNode, site: AstNode): AlloyType {
         const targetRoot = AstUtils.findRootNode(target);
-        if (type.isUnknown || !isModuleDecl(targetRoot) || targetRoot.params.length === 0 || targetRoot === this.root) return type;
+        if (type.isUnknown || !isModuleDecl(targetRoot) || !targetRoot.qualName || targetRoot.params.length === 0 || targetRoot === this.root) return type;
         const path = [...targetRoot.qualName.names, targetRoot.qualName.name].join('/');
-        let imports = this.root.import.filter(i => [...i.qualName.names, i.qualName.name].join('/') === path);
+        let imports = (this.root.import ?? []).filter(i => i.qualName && [...i.qualName.names, i.qualName.name].join('/') === path);
         if (imports.length > 1 && isQualName(site) && site.names.length === 1) {
             imports = imports.filter(i => i.alias === site.names[0]);
         }
@@ -700,16 +713,17 @@ class DocumentAnalysis implements TypeAnalysis {
     }
 
     /** Recognises calls: p, p[a, b], a.p, a.p[b] (a predicate or function applied to arguments). */
-    protected callOf(e: Expr): Call | undefined {
+    protected callOf(e: Expr | undefined): Call | undefined {
+        if (!e) return undefined;
         if (isQualName(e)) {
-            const target = e.ref.ref;
+            const target = e.ref?.ref;
             if (!isPredDecl(target) && !isFunDecl(target)) return undefined;
             const candidates = this.namesakes(e).filter((n): n is Callable => isPredDecl(n) || isFunDecl(n));
             return { name: e, candidates: candidates.includes(target) ? candidates : [target, ...candidates], args: [] };
         }
         if (isDotJoinExpr(e)) {
             const inner = isQualName(e.right) ? this.callOf(e.right) : undefined;
-            return inner && maxParams(inner) > 0 ? { ...inner, args: [e.left] } : undefined;
+            return inner && maxParams(inner) > 0 && e.left ? { ...inner, args: [e.left] } : undefined;
         }
         if (isBoxJoinExpr(e)) {
             const inner = this.callOf(e.left);
@@ -799,19 +813,22 @@ class DocumentAnalysis implements TypeAnalysis {
      * Expected kinds of expressions
      ******************************************************************************/
 
-    protected asFormula(e: Expr): AlloyType {
+    protected asFormula(e: Expr | undefined): AlloyType {
+        if (!e) return AlloyType.UNKNOWN;
         const t = this.typeOf(e);
         if (t.isUnknown || t.isBool) return t;
         return this.error(e, `This must be a formula expression.\nInstead, it has the following possible type(s):\n${this.format(t)}`);
     }
 
-    protected asSet(e: Expr): AlloyType {
+    protected asSet(e: Expr | undefined): AlloyType {
+        if (!e) return AlloyType.UNKNOWN;
         const t = this.typeOf(e);
         if (t.isUnknown || t.isSet()) return t;
         return this.error(e, `This must be a set or relation.\nInstead, it has the following possible type(s):\n${this.format(t)}`);
     }
 
-    protected asInt(e: Expr): AlloyType {
+    protected asInt(e: Expr | undefined): AlloyType {
+        if (!e) return AlloyType.UNKNOWN;
         const t = this.typeOf(e);
         if (t.isUnknown || t.isInt()) return t;
         return this.error(e, `This must be an integer expression.\nInstead, it has the following possible type(s):\n${this.format(t)}`);
@@ -839,7 +856,7 @@ class DocumentAnalysis implements TypeAnalysis {
 
     /** Records problems of the analysed document only; other documents report their own. */
     protected report(problem: TypeProblem): void {
-        if (AstUtils.findRootNode(problem.node) !== this.root) return;
+        if (!problem.node || AstUtils.findRootNode(problem.node) !== this.root) return;
         if (this.problems.some(p => p.node === problem.node && p.message === problem.message)) return;
         this.problems.push(problem);
     }
@@ -848,9 +865,9 @@ class DocumentAnalysis implements TypeAnalysis {
 /** Fields, predicates and functions of a module with the given name. */
 function declarationsNamed(module: AlloyModule, name: string): AstNode[] {
     const result: AstNode[] = [];
-    for (const p of module.paragraph) {
+    for (const p of module.paragraph ?? []) {
         if ((isPredDecl(p) || isFunDecl(p)) && p.name === name) result.push(p);
-        if (isSigDecl(p)) result.push(...p.fields.flatMap(f => f?.decl.names ?? []).filter(n => n.name === name));
+        if (isSigDecl(p)) result.push(...p.fields.flatMap(f => f?.decl?.names ?? []).filter(n => n.name === name));
     }
     return result;
 }
